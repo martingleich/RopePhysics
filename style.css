@@ -33,6 +33,15 @@ figure {
 canvas {
     display: block;
     border-radius: 8px;
+    cursor: default;
+}
+
+canvas.hover-handle {
+    cursor: grab;
+}
+
+canvas.grabbing {
+    cursor: grabbing;
 }
 
 figcaption {
