@@ -63,7 +63,7 @@
             for (let i = 0; i < rope_positions_x.length - 1; i++) {
                 const dx = rope_positions_x[i + 1] - rope_positions_x[i];
                 const dy = rope_positions_y[i + 1] - rope_positions_y[i];
-                const d = 1 - ROPE_POINT_DISTANCE/Math.sqrt(dx ** 2 + dy ** 2);
+                const d = 1 - ROPE_POINT_DISTANCE/Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
                 const offsetX = dx * d;
                 const offsetY = dy * d;
 
@@ -80,9 +80,10 @@
                     rope_positions_y[i + 1] -= offsetY/2;
                 }
             }
+            constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
         }
 
-        constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
+        apply_contact_friction(rope_positions_x, rope_positions_y, last_rope_positions_x, last_rope_positions_y, canvas.width, canvas.height, PHYSICS.groundFriction);
     }
     function draw(ctx, canvas)
     {

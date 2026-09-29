@@ -201,9 +201,10 @@
                     }
                 }
             }
+            constrain_to_bounds(cloth_positions_x, cloth_positions_y, canvas.width, canvas.height);
         }
 
-        constrain_to_bounds(cloth_positions_x, cloth_positions_y, canvas.width, canvas.height);
+        apply_contact_friction(cloth_positions_x, cloth_positions_y, last_cloth_positions_x, last_cloth_positions_y, canvas.width, canvas.height, PHYSICS.groundFriction);
     }
 
     main_cycle_if_visible(canvas, draw, animate);

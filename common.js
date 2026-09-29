@@ -108,9 +108,26 @@ function constrain_to_bounds(positions_x, positions_y, width, height) {
     }
 }
 
+// Dampens the tangential (sliding) velocity of points touching a boundary, then clamps positions.
+// Call this once per frame (not per solver iteration), otherwise the damping compounds far too fast.
+function apply_contact_friction(positions_x, positions_y, last_positions_x, last_positions_y, width, height, friction) {
+    for (let i = 0; i < positions_x.length; i++) {
+        if (positions_y[i] < 0 || positions_y[i] > height) { // touching ceiling or floor: dampen horizontal sliding
+            const vx = positions_x[i] - last_positions_x[i];
+            last_positions_x[i] += vx * friction;
+        }
+        if (positions_x[i] < 0 || positions_x[i] > width) { // touching a wall: dampen vertical sliding
+            const vy = positions_y[i] - last_positions_y[i];
+            last_positions_y[i] += vy * friction;
+        }
+    }
+    constrain_to_bounds(positions_x, positions_y, width, height);
+}
+
 const PHYSICS = {
     gravity: 1000,
     friction: 0.005,
+    groundFriction: 0.3,
 }
 
 function bind_slider(sliderId, outputId, initialValue, onChange) {
@@ -127,3 +144,4 @@ function bind_slider(sliderId, outputId, initialValue, onChange) {
 
 bind_slider('gravity_slider', 'gravity_value', PHYSICS.gravity, v => PHYSICS.gravity = v);
 bind_slider('friction_slider', 'friction_value', PHYSICS.friction, v => PHYSICS.friction = v);
+bind_slider('ground_friction_slider', 'ground_friction_value', PHYSICS.groundFriction, v => PHYSICS.groundFriction = v);
