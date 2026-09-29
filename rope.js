@@ -94,6 +94,10 @@
         // substep - so take the SUBSTEPS-th root here, otherwise the damping compounds to
         // (1-friction)^SUBSTEPS per frame instead of the intended (1-friction).
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, 1 / SUBSTEPS);
+        // Internal friction is applied inside Step 2's iteration loop below (not once per
+        // substep) - it has to influence the solver's own relaxation to actually suppress
+        // whip-wave propagation; applied only afterward, it's too late to matter.
+        const internal_damp_per_iteration = PHYSICS.internalFriction / ITERATIONS_PER_SUBSTEP;
 
         for(let step = 0; step < SUBSTEPS; step++) {
             const t = (step + 1) / SUBSTEPS;
@@ -163,6 +167,33 @@
                         rope_positions_y[i] += offsetY/2;
                         rope_positions_x[i + 1] -= offsetX/2;
                         rope_positions_y[i + 1] -= offsetY/2;
+                    }
+
+                    // Internal friction: damp the RELATIVE velocity between this pair, right here
+                    // inside the solver's own relaxation. This specifically kills whip-like waves
+                    // traveling along the rope (adjacent points moving very differently from each
+                    // other) without resisting the rope's overall bulk motion through space, where
+                    // neighbors move together and relative velocity is already near zero - that's
+                    // what air friction is for, and why cranking air friction up to fix whip-
+                    // snapping made the whole rope feel sluggish instead. Applying this only once
+                    // per substep (after the solver, not inside it) turned out too late to matter -
+                    // the tear-check above already sees the un-damped transient distances.
+                    if(internal_damp_per_iteration > 0) {
+                        const rel_vx = (rope_positions_x[i + 1] - last_rope_positions_x[i + 1]) - (rope_positions_x[i] - last_rope_positions_x[i]);
+                        const rel_vy = (rope_positions_y[i + 1] - last_rope_positions_y[i + 1]) - (rope_positions_y[i] - last_rope_positions_y[i]);
+
+                        if(leftFixed) {
+                            last_rope_positions_x[i + 1] += internal_damp_per_iteration * rel_vx;
+                            last_rope_positions_y[i + 1] += internal_damp_per_iteration * rel_vy;
+                        } else if(rightFixed) {
+                            last_rope_positions_x[i] -= internal_damp_per_iteration * rel_vx;
+                            last_rope_positions_y[i] -= internal_damp_per_iteration * rel_vy;
+                        } else {
+                            last_rope_positions_x[i] -= internal_damp_per_iteration * 0.5 * rel_vx;
+                            last_rope_positions_y[i] -= internal_damp_per_iteration * 0.5 * rel_vy;
+                            last_rope_positions_x[i + 1] += internal_damp_per_iteration * 0.5 * rel_vx;
+                            last_rope_positions_y[i + 1] += internal_damp_per_iteration * 0.5 * rel_vy;
+                        }
                     }
                 }
                 constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);

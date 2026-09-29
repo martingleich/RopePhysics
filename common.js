@@ -181,7 +181,9 @@ function apply_contact_friction(positions_x, positions_y, last_positions_x, last
 
 const PHYSICS = {
     gravity: 1000,
-    friction: 0.005,
+    friction: 0.005, // air friction: damps each point's absolute velocity (slows everything, including bulk motion)
+    internalFriction: 1.5, // damps relative velocity between connected points only - kills whip-like waves
+                           // traveling along the rope/cloth without making bulk movement feel sluggish
     groundFriction: 0.3,
     tearFactor: 1.8, // a constraint breaks permanently once stretched beyond this multiple of its rest length
 }
@@ -222,5 +224,6 @@ function bind_tear_slider(sliderId, outputId, initialValue, onChange) {
 
 bind_slider('gravity_slider', 'gravity_value', PHYSICS.gravity, v => PHYSICS.gravity = v);
 bind_slider('friction_slider', 'friction_value', PHYSICS.friction, v => PHYSICS.friction = v);
+bind_slider('internal_friction_slider', 'internal_friction_value', PHYSICS.internalFriction, v => PHYSICS.internalFriction = v);
 bind_slider('ground_friction_slider', 'ground_friction_value', PHYSICS.groundFriction, v => PHYSICS.groundFriction = v);
 bind_tear_slider('tear_factor_slider', 'tear_factor_value', PHYSICS.tearFactor, v => PHYSICS.tearFactor = v);

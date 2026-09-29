@@ -52,9 +52,10 @@
 
     const drag = setup_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS, cloth_positions_x, cloth_positions_y, HANDLE_RADIUS);
 
-    // Is this point currently held fixed, either by a named handle or a live drag?
+    // Is this point currently held fixed, either by being anchored along the top row
+    // (like a curtain hung from a rod - not just the two corners) or a live drag?
     function is_fixed(i) {
-        return i === 0 || i === NUM_CLOTH_POINTS - 1 || drag.is_point_pinned(i);
+        return i < NUM_CLOTH_POINTS || drag.is_point_pinned(i);
     }
 
     // Applies a distance-constraint correction between points a and b, respecting whether either is fixed.
@@ -77,6 +78,33 @@
             cloth_positions_x[b] -= offsetX;
             cloth_positions_y[b] -= offsetY;
             cloth_positions_z[b] -= offsetZ;
+        }
+
+        // Internal friction: damp the RELATIVE velocity between this pair, right here inside the
+        // solver's own relaxation (applying it only once per substep, after the solver, turned out
+        // too late to matter for the rope - the tear-check already sees the un-damped transient
+        // distances). Kills whip-like waves without resisting the cloth's overall bulk motion.
+        if(PHYSICS.internalFriction > 0 && !(aFixed && bFixed)) {
+            const damp = PHYSICS.internalFriction / ITERATIONS_PER_SUBSTEP;
+            const rel_vx = (cloth_positions_x[b] - last_cloth_positions_x[b]) - (cloth_positions_x[a] - last_cloth_positions_x[a]);
+            const rel_vy = (cloth_positions_y[b] - last_cloth_positions_y[b]) - (cloth_positions_y[a] - last_cloth_positions_y[a]);
+            const rel_vz = (cloth_positions_z[b] - last_cloth_positions_z[b]) - (cloth_positions_z[a] - last_cloth_positions_z[a]);
+            if(aFixed) {
+                last_cloth_positions_x[b] += damp * rel_vx;
+                last_cloth_positions_y[b] += damp * rel_vy;
+                last_cloth_positions_z[b] += damp * rel_vz;
+            } else if(bFixed) {
+                last_cloth_positions_x[a] -= damp * rel_vx;
+                last_cloth_positions_y[a] -= damp * rel_vy;
+                last_cloth_positions_z[a] -= damp * rel_vz;
+            } else {
+                last_cloth_positions_x[a] -= damp * 0.5 * rel_vx;
+                last_cloth_positions_y[a] -= damp * 0.5 * rel_vy;
+                last_cloth_positions_z[a] -= damp * 0.5 * rel_vz;
+                last_cloth_positions_x[b] += damp * 0.5 * rel_vx;
+                last_cloth_positions_y[b] += damp * 0.5 * rel_vy;
+                last_cloth_positions_z[b] += damp * 0.5 * rel_vz;
+            }
         }
     }
 
@@ -118,9 +146,9 @@
         ctx.arc(handles_x[1], handles_y[1], HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw the cloth
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2;
+        // Draw the cloth's structural grid (right/below)
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.lineWidth = 1;
         ctx.beginPath();
         for(let r = 0; r < NUM_CLOTH_POINTS; r++) {
             for(let c = 0; c < NUM_CLOTH_POINTS; c++) {
@@ -132,6 +160,27 @@
                 if(r < NUM_CLOTH_POINTS - 1 && !broken_below[index]) {
                     ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
                     ctx.lineTo(cloth_positions_x[index + NUM_CLOTH_POINTS], cloth_positions_y[index + NUM_CLOTH_POINTS]);
+                }
+            }
+        }
+        ctx.stroke();
+
+        // Also draw the diagonal (shear) connections, faintly. They're real physics constraints
+        // too - without drawing them, a patch held only by a diagonal (its structural neighbors
+        // all torn away) looks like it's floating disconnected, when it's actually still tethered.
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for(let r = 0; r < NUM_CLOTH_POINTS; r++) {
+            for(let c = 0; c < NUM_CLOTH_POINTS; c++) {
+                const index = r * NUM_CLOTH_POINTS + c;
+                if(r < NUM_CLOTH_POINTS - 1 && c < NUM_CLOTH_POINTS - 1 && !broken_diag1[index]) {
+                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
+                    ctx.lineTo(cloth_positions_x[index + NUM_CLOTH_POINTS + 1], cloth_positions_y[index + NUM_CLOTH_POINTS + 1]);
+                }
+                if(r < NUM_CLOTH_POINTS - 1 && c > 0 && !broken_diag2[index]) {
+                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
+                    ctx.lineTo(cloth_positions_x[index + NUM_CLOTH_POINTS - 1], cloth_positions_y[index + NUM_CLOTH_POINTS - 1]);
                 }
             }
         }
@@ -167,6 +216,16 @@
             cloth_positions_y[NUM_CLOTH_POINTS-1] = handle_start_y[1] + (handles_y[1] - handle_start_y[1]) * t;
             last_cloth_positions_x[NUM_CLOTH_POINTS-1] = cloth_positions_x[NUM_CLOTH_POINTS-1];
             last_cloth_positions_y[NUM_CLOTH_POINTS-1] = cloth_positions_y[NUM_CLOTH_POINTS-1];
+            // The rest of the top row is anchored along a straight rail between the two corner
+            // handles, like a curtain hung from a rod - so every point along it bears real
+            // tension (and can tear on its own), not just the two corner connections.
+            for(let c = 1; c < NUM_CLOTH_POINTS - 1; c++) {
+                const frac = c / (NUM_CLOTH_POINTS - 1);
+                cloth_positions_x[c] = cloth_positions_x[0] + (cloth_positions_x[NUM_CLOTH_POINTS-1] - cloth_positions_x[0]) * frac;
+                cloth_positions_y[c] = cloth_positions_y[0] + (cloth_positions_y[NUM_CLOTH_POINTS-1] - cloth_positions_y[0]) * frac;
+                last_cloth_positions_x[c] = cloth_positions_x[c];
+                last_cloth_positions_y[c] = cloth_positions_y[c];
+            }
             // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
             if(point_target) {
                 cloth_positions_x[point_target.idx] = point_start_x + (point_target.x - point_start_x) * t;
