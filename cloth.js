@@ -15,10 +15,6 @@
     function get_position_y(i) {
         return handles_y[0] + Math.floor(i / NUM_CLOTH_POINTS) * CLOTH_POINT_DISTANCE
     }
-    function is_fixed(i) {
-        return i === 0 || i === NUM_CLOTH_POINTS - 1;
-    }
-
     let cloth_positions_y = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map(i => get_position_y(i)); // The current y position of each rope element
     let cloth_positions_x = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map(i => get_position_x(i)); // The current x position of each rope element
     let cloth_positions_z = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map(i => Math.random()-0.5); // The current z position of each rope element
@@ -26,7 +22,41 @@
     let last_cloth_positions_x = [...cloth_positions_x]; // The last x position of each rope element
     let last_cloth_positions_z = [...cloth_positions_z]; // The last x position of each rope element
 
-    setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
+    // broken_X[index]: true once that connection (from point `index` to its neighbor) has torn
+    let broken_right = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false);
+    let broken_below = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false);
+    let broken_diag1 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false); // top-left to bottom-right
+    let broken_diag2 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false); // top-right to bottom-left
+
+    const drag = setup_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS, cloth_positions_x, cloth_positions_y, HANDLE_RADIUS);
+
+    // Is this point currently held fixed, either by a named handle or a live drag?
+    function is_fixed(i) {
+        return i === 0 || i === NUM_CLOTH_POINTS - 1 || drag.is_point_pinned(i);
+    }
+
+    // Applies a distance-constraint correction between points a and b, respecting whether either is fixed.
+    function apply_correction(a, b, offsetX, offsetY, offsetZ) {
+        const aFixed = is_fixed(a), bFixed = is_fixed(b);
+        if(aFixed && bFixed) {
+            // both ends held fixed, nothing to adjust
+        } else if(aFixed) {
+            cloth_positions_x[b] -= 2*offsetX;
+            cloth_positions_y[b] -= 2*offsetY;
+            cloth_positions_z[b] -= 2*offsetZ;
+        } else if(bFixed) {
+            cloth_positions_x[a] += 2*offsetX;
+            cloth_positions_y[a] += 2*offsetY;
+            cloth_positions_z[a] += 2*offsetZ;
+        } else {
+            cloth_positions_x[a] += offsetX;
+            cloth_positions_y[a] += offsetY;
+            cloth_positions_z[a] += offsetZ;
+            cloth_positions_x[b] -= offsetX;
+            cloth_positions_y[b] -= offsetY;
+            cloth_positions_z[b] -= offsetZ;
+        }
+    }
 
     function draw(ctx, canvas)
     {
@@ -53,11 +83,11 @@
         for(let r = 0; r < NUM_CLOTH_POINTS; r++) {
             for(let c = 0; c < NUM_CLOTH_POINTS; c++) {
                 const index = r * NUM_CLOTH_POINTS + c;
-                if(c < NUM_CLOTH_POINTS - 1) {
+                if(c < NUM_CLOTH_POINTS - 1 && !broken_right[index]) {
                     ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
                     ctx.lineTo(cloth_positions_x[index + 1], cloth_positions_y[index + 1]);
                 }
-                if(r < NUM_CLOTH_POINTS - 1) {
+                if(r < NUM_CLOTH_POINTS - 1 && !broken_below[index]) {
                     ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
                     ctx.lineTo(cloth_positions_x[index + NUM_CLOTH_POINTS], cloth_positions_y[index + NUM_CLOTH_POINTS]);
                 }
@@ -76,6 +106,13 @@
         cloth_positions_y[NUM_CLOTH_POINTS-1] = handles_y[1];
         last_cloth_positions_x[NUM_CLOTH_POINTS-1] = handles_x[1]
         last_cloth_positions_y[NUM_CLOTH_POINTS-1] = handles_y[1];
+        // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
+        for(let i = 0; i < NUM_CLOTH_POINTS * NUM_CLOTH_POINTS; i++) {
+            if(drag.is_point_pinned(i)) {
+                last_cloth_positions_x[i] = cloth_positions_x[i];
+                last_cloth_positions_y[i] = cloth_positions_y[i];
+            }
+        }
 
         // Update the rope positions
         // Step 1: Apply a verlet integration to each rope point.
@@ -101,102 +138,76 @@
             for(let r = 0; r < NUM_CLOTH_POINTS; r++) {
                 for(let c = 0; c < NUM_CLOTH_POINTS; c++) {
                     const index = r * NUM_CLOTH_POINTS + c;
-                    if(c < NUM_CLOTH_POINTS - 1) { // Visit to the right
-                        const dx = cloth_positions_x[index + 1] - cloth_positions_x[index];
-                        const dy = cloth_positions_y[index + 1] - cloth_positions_y[index];
-                        const dz = cloth_positions_z[index + 1] - cloth_positions_z[index];
+                    if(c < NUM_CLOTH_POINTS - 1 && !broken_right[index]) { // Visit to the right
+                        const b = index + 1;
+                        const dx = cloth_positions_x[b] - cloth_positions_x[index];
+                        const dy = cloth_positions_y[b] - cloth_positions_y[index];
+                        const dz = cloth_positions_z[b] - cloth_positions_z[index];
                         const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
-                        const d = distance - CLOTH_POINT_DISTANCE;
-                        const offsetX = (dx / distance) * d / 2;
-                        const offsetY = (dy / distance) * d / 2;
-                        const offsetZ = (dz / distance) * d / 2;
 
-                        if(index == 0) {
-                            cloth_positions_x[index + 1] -= 2*offsetX;
-                            cloth_positions_y[index + 1] -= 2*offsetY;
-                            cloth_positions_z[index + 1] -= 2*offsetZ;
-                        } else if(index + 1 === NUM_CLOTH_POINTS - 1) {
-                            cloth_positions_x[index] += 2*offsetX;
-                            cloth_positions_y[index] += 2*offsetY;
-                            cloth_positions_z[index] += 2*offsetZ;
+                        if(distance > PHYSICS.tearFactor * CLOTH_POINT_DISTANCE) {
+                            broken_right[index] = true;
                         } else {
-                            cloth_positions_x[index] += offsetX;
-                            cloth_positions_y[index] += offsetY;
-                            cloth_positions_z[index] += offsetZ;
-                            cloth_positions_x[index + 1] -= offsetX;
-                            cloth_positions_y[index + 1] -= offsetY;
-                            cloth_positions_z[index + 1] -= offsetZ;
+                            const d = distance - CLOTH_POINT_DISTANCE;
+                            const offsetX = (dx / distance) * d / 2;
+                            const offsetY = (dy / distance) * d / 2;
+                            const offsetZ = (dz / distance) * d / 2;
+                            apply_correction(index, b, offsetX, offsetY, offsetZ);
                         }
                     }
-                    if(r < NUM_CLOTH_POINTS - 1) { // Visit below
-                        const dx = cloth_positions_x[index + NUM_CLOTH_POINTS] - cloth_positions_x[index];
-                        const dy = cloth_positions_y[index + NUM_CLOTH_POINTS] - cloth_positions_y[index];
-                        const dz = cloth_positions_z[index + NUM_CLOTH_POINTS] - cloth_positions_z[index];
+                    if(r < NUM_CLOTH_POINTS - 1 && !broken_below[index]) { // Visit below
+                        const b = index + NUM_CLOTH_POINTS;
+                        const dx = cloth_positions_x[b] - cloth_positions_x[index];
+                        const dy = cloth_positions_y[b] - cloth_positions_y[index];
+                        const dz = cloth_positions_z[b] - cloth_positions_z[index];
                         const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
-                        const d = distance - CLOTH_POINT_DISTANCE;
-                        const offsetX = (dx / distance) * d / 2;
-                        const offsetY = (dy / distance) * d / 2;
-                        const offsetZ = (dz / distance) * d / 2;
 
-                        if(index == 0 || index == NUM_CLOTH_POINTS - 1) {
-                            cloth_positions_x[index + NUM_CLOTH_POINTS] -= 2*offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS] -= 2*offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS] -= 2*offsetZ;
+                        if(distance > PHYSICS.tearFactor * CLOTH_POINT_DISTANCE) {
+                            broken_below[index] = true;
                         } else {
-                            cloth_positions_x[index] += offsetX;
-                            cloth_positions_y[index] += offsetY;
-                            cloth_positions_z[index] += offsetZ;
-                            cloth_positions_x[index + NUM_CLOTH_POINTS] -= offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS] -= offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS] -= offsetZ;
+                            const d = distance - CLOTH_POINT_DISTANCE;
+                            const offsetX = (dx / distance) * d / 2;
+                            const offsetY = (dy / distance) * d / 2;
+                            const offsetZ = (dz / distance) * d / 2;
+                            apply_correction(index, b, offsetX, offsetY, offsetZ);
                         }
                     }
                     // Visit diagonal(top left to buttom right)
-                    if(r < NUM_CLOTH_POINTS - 1 && c < NUM_CLOTH_POINTS - 1) {
-                        const dx = cloth_positions_x[index + NUM_CLOTH_POINTS + 1] - cloth_positions_x[index];
-                        const dy = cloth_positions_y[index + NUM_CLOTH_POINTS + 1] - cloth_positions_y[index];
-                        const dz = cloth_positions_z[index + NUM_CLOTH_POINTS + 1] - cloth_positions_z[index];
+                    if(r < NUM_CLOTH_POINTS - 1 && c < NUM_CLOTH_POINTS - 1 && !broken_diag1[index]) {
+                        const b = index + NUM_CLOTH_POINTS + 1;
+                        const dx = cloth_positions_x[b] - cloth_positions_x[index];
+                        const dy = cloth_positions_y[b] - cloth_positions_y[index];
+                        const dz = cloth_positions_z[b] - cloth_positions_z[index];
                         const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
-                        const d = distance - Math.sqrt(2)*CLOTH_POINT_DISTANCE;
-                        const offsetX = (dx / distance) * d / 2;
-                        const offsetY = (dy / distance) * d / 2;
-                        const offsetZ = (dz / distance) * d / 2;
+                        const rest = Math.sqrt(2) * CLOTH_POINT_DISTANCE;
 
-                        if(is_fixed(index)) {
-                            cloth_positions_x[index + NUM_CLOTH_POINTS + 1] -= 2*offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS + 1] -= 2*offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS + 1] -= 2*offsetZ;
+                        if(distance > PHYSICS.tearFactor * rest) {
+                            broken_diag1[index] = true;
                         } else {
-                            cloth_positions_x[index] += offsetX;
-                            cloth_positions_y[index] += offsetY;
-                            cloth_positions_z[index] += offsetZ;
-                            cloth_positions_x[index + NUM_CLOTH_POINTS + 1] -= offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS + 1] -= offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS + 1] -= offsetZ;
+                            const d = distance - rest;
+                            const offsetX = (dx / distance) * d / 2;
+                            const offsetY = (dy / distance) * d / 2;
+                            const offsetZ = (dz / distance) * d / 2;
+                            apply_correction(index, b, offsetX, offsetY, offsetZ);
                         }
                     }
                     // Visit diagonal(top right to buttom left)
-                    if(r < NUM_CLOTH_POINTS - 1 && c > 0) {
-                        const dx = cloth_positions_x[index + NUM_CLOTH_POINTS - 1] - cloth_positions_x[index];
-                        const dy = cloth_positions_y[index + NUM_CLOTH_POINTS - 1] - cloth_positions_y[index];
-                        const dz = cloth_positions_z[index + NUM_CLOTH_POINTS - 1] - cloth_positions_z[index];
+                    if(r < NUM_CLOTH_POINTS - 1 && c > 0 && !broken_diag2[index]) {
+                        const b = index + NUM_CLOTH_POINTS - 1;
+                        const dx = cloth_positions_x[b] - cloth_positions_x[index];
+                        const dy = cloth_positions_y[b] - cloth_positions_y[index];
+                        const dz = cloth_positions_z[b] - cloth_positions_z[index];
                         const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
-                        const d = distance - Math.sqrt(2)*CLOTH_POINT_DISTANCE;
-                        const offsetX = (dx / distance) * d / 2;
-                        const offsetY = (dy / distance) * d / 2;
-                        const offsetZ = (dz / distance) * d / 2;
+                        const rest = Math.sqrt(2) * CLOTH_POINT_DISTANCE;
 
-                        if(is_fixed(index)) {
-                            cloth_positions_x[index + NUM_CLOTH_POINTS - 1] -= 2*offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS - 1] -= 2*offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS - 1] -= 2*offsetZ;
+                        if(distance > PHYSICS.tearFactor * rest) {
+                            broken_diag2[index] = true;
                         } else {
-                            cloth_positions_x[index] += offsetX;
-                            cloth_positions_y[index] += offsetY;
-                            cloth_positions_z[index] += offsetZ;
-                            cloth_positions_x[index + NUM_CLOTH_POINTS - 1] -= offsetX;
-                            cloth_positions_y[index + NUM_CLOTH_POINTS - 1] -= offsetY;
-                            cloth_positions_z[index + NUM_CLOTH_POINTS - 1] -= offsetZ;
+                            const d = distance - rest;
+                            const offsetX = (dx / distance) * d / 2;
+                            const offsetY = (dy / distance) * d / 2;
+                            const offsetZ = (dz / distance) * d / 2;
+                            apply_correction(index, b, offsetX, offsetY, offsetZ);
                         }
                     }
                 }

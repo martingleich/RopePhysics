@@ -31,29 +31,54 @@ function main_cycle_if_visible(canvas, draw, animate)
 }
 
 
-function setup_handle_dragging(canvas, handles_x, handles_y, handle_radius)
+// Lets the user drag the named handles (handles_x/y, always pinned), or grab any other
+// simulated point (positions_x/y) and drag it while the mouse is held, releasing it back
+// into the simulation on mouseup. Named handles take priority when both overlap a click.
+// Returns { is_point_pinned(i) } so the caller's physics step can skip a point currently
+// being live-dragged, the same way it already skips the named handles.
+function setup_dragging(canvas, handles_x, handles_y, handle_radius, positions_x, positions_y, grab_radius)
 {
-    let isDragging = null; // Is the handle being dragged currently, if so, which one?
-    let drag_offset_x = 0; // X Offset between the mouse and the handle's center
-    let drag_offset_y = 0; // Y Offset between the mouse and the handle's center
+    let dragging = null; // null, or { kind: 'handle' | 'point', idx }
+    let drag_offset_x = 0; // X Offset between the mouse and the dragged point's center
+    let drag_offset_y = 0; // Y Offset between the mouse and the dragged point's center
 
-    function is_in_handle(event) {
+    function mouse_pos(event) {
         const rect = canvas.getBoundingClientRect();
-        const mouseX = event.clientX - rect.left;
-        const mouseY = event.clientY - rect.top;
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
 
-        // Check if the click is within a handle's radius
+    function find_handle(x, y) {
         for(let i = 0; i < handles_x.length; i++) {
-            const distance_to_handle = (mouseX - handles_x[i]) ** 2 + (mouseY - handles_y[i]) ** 2;
-            if(distance_to_handle <= handle_radius**2) {
-                return {
-                    idx : i,
-                    drag_offset_x: mouseX - handles_x[i],
-                    drag_offset_y: mouseY - handles_y[i],
-                }
+            const distance_to_handle = (x - handles_x[i]) ** 2 + (y - handles_y[i]) ** 2;
+            if(distance_to_handle <= handle_radius**2)
+                return i;
+        }
+        return null;
+    }
+
+    // Finds whichever simulated point is nearest the cursor, within grab_radius.
+    function find_point(x, y) {
+        let best = null;
+        let best_distance = grab_radius ** 2;
+        for(let i = 0; i < positions_x.length; i++) {
+            const distance_to_point = (x - positions_x[i]) ** 2 + (y - positions_y[i]) ** 2;
+            if(distance_to_point <= best_distance) {
+                best_distance = distance_to_point;
+                best = i;
             }
         }
-        return null
+        return best;
+    }
+
+    function hit_test(event) {
+        const { x, y } = mouse_pos(event);
+        const handle_idx = find_handle(x, y);
+        if(handle_idx !== null)
+            return { kind: 'handle', idx: handle_idx, x, y };
+        const point_idx = find_point(x, y);
+        if(point_idx !== null)
+            return { kind: 'point', idx: point_idx, x, y };
+        return null;
     }
 
     function set_grabbing(is_grabbing) {
@@ -61,44 +86,55 @@ function setup_handle_dragging(canvas, handles_x, handles_y, handle_radius)
     }
 
     function update_hover_cursor(event) {
-        canvas.classList.toggle('hover-handle', is_in_handle(event) !== null);
+        canvas.classList.toggle('hover-handle', hit_test(event) !== null);
     }
 
     canvas.addEventListener('mousedown', (event) => {
         if(event.button !== 0)
             return;
-        const grab_data = is_in_handle(event);
-        if(grab_data === null)
+        const hit = hit_test(event);
+        if(hit === null)
             return;
         set_grabbing(true);
-        isDragging = grab_data.idx;
-        drag_offset_x = grab_data.drag_offset_x;
-        drag_offset_y = grab_data.drag_offset_y;
+        dragging = { kind: hit.kind, idx: hit.idx };
+        const center_x = hit.kind === 'handle' ? handles_x[hit.idx] : positions_x[hit.idx];
+        const center_y = hit.kind === 'handle' ? handles_y[hit.idx] : positions_y[hit.idx];
+        drag_offset_x = hit.x - center_x;
+        drag_offset_y = hit.y - center_y;
     });
 
     canvas.addEventListener('mousemove', (event) => {
-        if (isDragging !== null) {
-            const rect = canvas.getBoundingClientRect();
-            const x = event.clientX - rect.left - drag_offset_x;
-            const y = event.clientY - rect.top - drag_offset_y;
-            handles_x[isDragging] = Math.min(Math.max(x, handle_radius), canvas.width - handle_radius);
-            handles_y[isDragging] = Math.min(Math.max(y, handle_radius), canvas.height - handle_radius);
+        if (dragging !== null) {
+            const { x, y } = mouse_pos(event);
+            if(dragging.kind === 'handle') {
+                handles_x[dragging.idx] = Math.min(Math.max(x - drag_offset_x, handle_radius), canvas.width - handle_radius);
+                handles_y[dragging.idx] = Math.min(Math.max(y - drag_offset_y, handle_radius), canvas.height - handle_radius);
+            } else {
+                positions_x[dragging.idx] = Math.min(Math.max(x - drag_offset_x, 0), canvas.width);
+                positions_y[dragging.idx] = Math.min(Math.max(y - drag_offset_y, 0), canvas.height);
+            }
             return;
         }
         update_hover_cursor(event);
     });
 
     canvas.addEventListener('mouseup', event => {
-        isDragging = null;
+        dragging = null;
         set_grabbing(false);
         update_hover_cursor(event);
     });
 
     canvas.addEventListener('mouseleave', () => {
-        isDragging = null;
+        dragging = null;
         set_grabbing(false);
         canvas.classList.remove('hover-handle');
     });
+
+    return {
+        is_point_pinned(i) {
+            return dragging !== null && dragging.kind === 'point' && dragging.idx === i;
+        }
+    };
 }
 
 function constrain_to_bounds(positions_x, positions_y, width, height) {
@@ -128,6 +164,7 @@ const PHYSICS = {
     gravity: 1000,
     friction: 0.005,
     groundFriction: 0.3,
+    tearFactor: 1.8, // a constraint breaks permanently once stretched beyond this multiple of its rest length
 }
 
 function bind_slider(sliderId, outputId, initialValue, onChange) {

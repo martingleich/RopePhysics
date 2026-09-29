@@ -14,8 +14,18 @@
     let last_rope_positions_y = [...rope_positions_y]; // The last y position of each rope element
     let last_rope_positions_x = [...rope_positions_x]; // The last x position of each rope element
     let handle_map = [0, NUM_ROPE_POINTS-1]; // Maps handle ids to rope_pointes
+    let broken = new Array(NUM_ROPE_POINTS - 1).fill(false); // broken[i]: true once the segment between point i and i+1 has torn
 
-    setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
+    const drag = setup_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS, rope_positions_x, rope_positions_y, HANDLE_RADIUS);
+
+    // Is this point currently held fixed, either by a named handle or a live drag?
+    function is_fixed_index(i) {
+        for(let h = 0; h < handles_x.length; h++) {
+            if(handle_map[h] === i)
+                return true;
+        }
+        return drag.is_point_pinned(i);
+    }
 
     const button = document.getElementById("toogle_handle");
     function update_buttom_label() {
@@ -45,10 +55,19 @@
             last_rope_positions_x[handle_map[i]] = handles_x[i]
             last_rope_positions_y[handle_map[i]] = handles_y[i];
         }
+        // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
+        for(let i = 0; i < NUM_ROPE_POINTS; i++) {
+            if(drag.is_point_pinned(i)) {
+                last_rope_positions_x[i] = rope_positions_x[i];
+                last_rope_positions_y[i] = rope_positions_y[i];
+            }
+        }
 
         // Update the rope positions
         // Step 1: Apply a verlet integration to each rope point.
-        for (let i = 1; i <= NUM_ROPE_POINTS - handles_x.length; i++) { // Skip the first point, since it is the handle and cannot move
+        for (let i = 0; i < NUM_ROPE_POINTS; i++) {
+            if(is_fixed_index(i)) // Skip fixed points (handles or a live drag), they can't move under physics.
+                continue;
             const last_x = rope_positions_x[i];
             rope_positions_x[i] += (1-PHYSICS.friction)*(rope_positions_x[i] - last_rope_positions_x[i]);
             last_rope_positions_x[i] = last_x;
@@ -61,16 +80,30 @@
         // Step 2: Constrain the rope points to a maximum distance from each other
         for (let count = 0; count < 4*NUM_ROPE_POINTS; ++count) { // TODO: What number to pick here?
             for (let i = 0; i < rope_positions_x.length - 1; i++) {
+                if(broken[i])
+                    continue; // this segment has torn, the two sides are independent now
+
                 const dx = rope_positions_x[i + 1] - rope_positions_x[i];
                 const dy = rope_positions_y[i + 1] - rope_positions_y[i];
-                const d = 1 - ROPE_POINT_DISTANCE/Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
+                const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
+
+                if(distance > PHYSICS.tearFactor * ROPE_POINT_DISTANCE) {
+                    broken[i] = true;
+                    continue;
+                }
+
+                const d = 1 - ROPE_POINT_DISTANCE/distance;
                 const offsetX = dx * d;
                 const offsetY = dy * d;
 
-                if(i == 0) {
+                const leftFixed = is_fixed_index(i);
+                const rightFixed = is_fixed_index(i + 1);
+                if(leftFixed && rightFixed) {
+                    // both ends held fixed, nothing to adjust
+                } else if(leftFixed) {
                     rope_positions_x[i + 1] -= offsetX;
                     rope_positions_y[i + 1] -= offsetY;
-                } else if(i == NUM_ROPE_POINTS - handles_x.length) {
+                } else if(rightFixed) {
                     rope_positions_x[i] += offsetX;
                     rope_positions_y[i] += offsetY;
                 } else {
@@ -106,7 +139,10 @@
         ctx.beginPath();
         ctx.moveTo(rope_positions_x[0], rope_positions_y[0]);
         for (let i = 1; i < rope_positions_x.length; i++) {
-            ctx.lineTo(rope_positions_x[i], rope_positions_y[i]);
+            if(broken[i - 1])
+                ctx.moveTo(rope_positions_x[i], rope_positions_y[i]); // segment torn, start a new subpath
+            else
+                ctx.lineTo(rope_positions_x[i], rope_positions_y[i]);
         }
         ctx.stroke();
     }
