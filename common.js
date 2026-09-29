@@ -41,6 +41,8 @@ function setup_dragging(canvas, handles_x, handles_y, handle_radius, positions_x
     let dragging = null; // null, or { kind: 'handle' | 'point', idx }
     let drag_offset_x = 0; // X Offset between the mouse and the dragged point's center
     let drag_offset_y = 0; // Y Offset between the mouse and the dragged point's center
+    let point_target_x = 0; // Latest raw mouse-tracked target for a dragged point (not applied directly -
+    let point_target_y = 0; // the caller eases toward this across a frame's substeps; see get_point_target()
 
     function mouse_pos(event) {
         const rect = canvas.getBoundingClientRect();
@@ -101,6 +103,12 @@ function setup_dragging(canvas, handles_x, handles_y, handle_radius, positions_x
         const center_y = hit.kind === 'handle' ? handles_y[hit.idx] : positions_y[hit.idx];
         drag_offset_x = hit.x - center_x;
         drag_offset_y = hit.y - center_y;
+        if(hit.kind === 'point') {
+            // Start the target at the point's current position, so there's nothing to
+            // ease toward yet if animate() runs before the next mousemove arrives.
+            point_target_x = positions_x[hit.idx];
+            point_target_y = positions_y[hit.idx];
+        }
     });
 
     canvas.addEventListener('mousemove', (event) => {
@@ -110,8 +118,11 @@ function setup_dragging(canvas, handles_x, handles_y, handle_radius, positions_x
                 handles_x[dragging.idx] = Math.min(Math.max(x - drag_offset_x, handle_radius), canvas.width - handle_radius);
                 handles_y[dragging.idx] = Math.min(Math.max(y - drag_offset_y, handle_radius), canvas.height - handle_radius);
             } else {
-                positions_x[dragging.idx] = Math.min(Math.max(x - drag_offset_x, 0), canvas.width);
-                positions_y[dragging.idx] = Math.min(Math.max(y - drag_offset_y, 0), canvas.height);
+                // Record the raw target only. The caller eases the actual simulated point
+                // toward it a little each substep, instead of snapping it here directly -
+                // that smooths out raw mouse/trackpad noise instead of injecting it undamped.
+                point_target_x = Math.min(Math.max(x - drag_offset_x, 0), canvas.width);
+                point_target_y = Math.min(Math.max(y - drag_offset_y, 0), canvas.height);
             }
             return;
         }
@@ -133,6 +144,14 @@ function setup_dragging(canvas, handles_x, handles_y, handle_radius, positions_x
     return {
         is_point_pinned(i) {
             return dragging !== null && dragging.kind === 'point' && dragging.idx === i;
+        },
+        // The currently-dragged point's raw mouse target, or null if a handle is being
+        // dragged (or nothing is). The caller eases the simulated point toward this over
+        // a frame's substeps rather than snapping straight to it.
+        get_point_target() {
+            if(dragging !== null && dragging.kind === 'point')
+                return { idx: dragging.idx, x: point_target_x, y: point_target_y };
+            return null;
         }
     };
 }

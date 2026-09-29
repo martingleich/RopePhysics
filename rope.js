@@ -8,6 +8,10 @@
     const ROPE_LENGTH = 200;
     const NUM_ROPE_POINTS = 100;
     const ROPE_POINT_DISTANCE = ROPE_LENGTH / NUM_ROPE_POINTS;
+    const SUBSTEPS = 8; // split each frame into several smaller physics steps, so gravity never
+                        // outruns the constraint solver (fixes long-term length "creep")
+    const ITERATIONS_PER_SUBSTEP = 50; // 8*50 = 400, same total solver work as before substepping
+    const STRENGTH_VARIANCE = 0.4; // +/-40% random per-segment strength, so segments aren't perfectly uniform
 
     let rope_positions_y = [...Array(NUM_ROPE_POINTS).keys()].map(i => handles_y[0] + i*ROPE_POINT_DISTANCE); // The current y position of each rope element
     let rope_positions_x = [...Array(NUM_ROPE_POINTS).keys()].map(_ => handles_x[0]); // The current x position of each rope element
@@ -15,6 +19,13 @@
     let last_rope_positions_x = [...rope_positions_x]; // The last x position of each rope element
     let handle_map = [0, NUM_ROPE_POINTS-1]; // Maps handle ids to rope_pointes
     let broken = new Array(NUM_ROPE_POINTS - 1).fill(false); // broken[i]: true once the segment between point i and i+1 has torn
+    let segment_strength = new Array(NUM_ROPE_POINTS - 1); // per-segment random tear-resistance multiplier
+
+    function randomize_segment_strength() {
+        for(let i = 0; i < segment_strength.length; i++)
+            segment_strength[i] = 1 + (Math.random() - 0.5) * STRENGTH_VARIANCE;
+    }
+    randomize_segment_strength();
 
     const drag = setup_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS, rope_positions_x, rope_positions_y, HANDLE_RADIUS);
 
@@ -38,8 +49,10 @@
     update_buttom_label();
     button?.addEventListener('click', () => {
         if(handles_x.length < 2) {
-            handles_x.push(150);
-            handles_y.push(50);
+            // Spawn the new handle exactly where the rope's free end already is, so pinning
+            // it doesn't teleport that point and instantly overstretch its last segment.
+            handles_x.push(rope_positions_x[NUM_ROPE_POINTS - 1]);
+            handles_y.push(rope_positions_y[NUM_ROPE_POINTS - 1]);
         } else {
             handles_x.pop();
             handles_y.pop();
@@ -60,77 +73,100 @@
             last_rope_positions_y[i] = rope_positions_y[i];
         }
         broken.fill(false);
+        randomize_segment_strength();
         update_buttom_label();
     }
     document.getElementById('reset_button')?.addEventListener('click', reset);
 
     function animate(dt) {
-        // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
-        for(let i = 0; i < handles_x.length; ++i) {
-            rope_positions_x[handle_map[i]] = handles_x[i];
-            rope_positions_y[handle_map[i]] = handles_y[i];
-            last_rope_positions_x[handle_map[i]] = handles_x[i]
-            last_rope_positions_y[handle_map[i]] = handles_y[i];
-        }
-        // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
-        for(let i = 0; i < NUM_ROPE_POINTS; i++) {
-            if(drag.is_point_pinned(i)) {
-                last_rope_positions_x[i] = rope_positions_x[i];
-                last_rope_positions_y[i] = rope_positions_y[i];
+        const sub_dt = dt / SUBSTEPS;
+
+        // Capture where each externally-driven point currently is, so it can be eased
+        // toward its live target a little each substep instead of snapping there in one
+        // go. This filters out raw mouse/trackpad noise, and lets the solver absorb a
+        // moving anchor's motion gradually instead of all at once in the first substep.
+        const handle_start_x = handles_x.map((_, i) => rope_positions_x[handle_map[i]]);
+        const handle_start_y = handles_y.map((_, i) => rope_positions_y[handle_map[i]]);
+        const point_target = drag.get_point_target();
+        const point_start_x = point_target ? rope_positions_x[point_target.idx] : 0;
+        const point_start_y = point_target ? rope_positions_y[point_target.idx] : 0;
+        // PHYSICS.friction is a per-frame retention factor, but Step 1 below now runs once per
+        // substep - so take the SUBSTEPS-th root here, otherwise the damping compounds to
+        // (1-friction)^SUBSTEPS per frame instead of the intended (1-friction).
+        const substep_friction_retention = Math.pow(1 - PHYSICS.friction, 1 / SUBSTEPS);
+
+        for(let step = 0; step < SUBSTEPS; step++) {
+            const t = (step + 1) / SUBSTEPS;
+
+            // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
+            for(let i = 0; i < handles_x.length; ++i) {
+                rope_positions_x[handle_map[i]] = handle_start_x[i] + (handles_x[i] - handle_start_x[i]) * t;
+                rope_positions_y[handle_map[i]] = handle_start_y[i] + (handles_y[i] - handle_start_y[i]) * t;
+                last_rope_positions_x[handle_map[i]] = rope_positions_x[handle_map[i]];
+                last_rope_positions_y[handle_map[i]] = rope_positions_y[handle_map[i]];
             }
-        }
+            // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
+            if(point_target) {
+                rope_positions_x[point_target.idx] = point_start_x + (point_target.x - point_start_x) * t;
+                rope_positions_y[point_target.idx] = point_start_y + (point_target.y - point_start_y) * t;
+                last_rope_positions_x[point_target.idx] = rope_positions_x[point_target.idx];
+                last_rope_positions_y[point_target.idx] = rope_positions_y[point_target.idx];
+            }
 
-        // Update the rope positions
-        // Step 1: Apply a verlet integration to each rope point.
-        for (let i = 0; i < NUM_ROPE_POINTS; i++) {
-            if(is_fixed_index(i)) // Skip fixed points (handles or a live drag), they can't move under physics.
-                continue;
-            const last_x = rope_positions_x[i];
-            rope_positions_x[i] += (1-PHYSICS.friction)*(rope_positions_x[i] - last_rope_positions_x[i]);
-            last_rope_positions_x[i] = last_x;
-
-            const last_y = rope_positions_y[i];
-            rope_positions_y[i] += (1-PHYSICS.friction)*(rope_positions_y[i] - last_rope_positions_y[i]) + PHYSICS.gravity * dt * dt;
-            last_rope_positions_y[i] = last_y;
-        }
-
-        // Step 2: Constrain the rope points to a maximum distance from each other
-        for (let count = 0; count < 4*NUM_ROPE_POINTS; ++count) { // TODO: What number to pick here?
-            for (let i = 0; i < rope_positions_x.length - 1; i++) {
-                if(broken[i])
-                    continue; // this segment has torn, the two sides are independent now
-
-                const dx = rope_positions_x[i + 1] - rope_positions_x[i];
-                const dy = rope_positions_y[i + 1] - rope_positions_y[i];
-                const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
-
-                if(distance > PHYSICS.tearFactor * ROPE_POINT_DISTANCE) {
-                    broken[i] = true;
+            // Update the rope positions
+            // Step 1: Apply a verlet integration to each rope point.
+            for (let i = 0; i < NUM_ROPE_POINTS; i++) {
+                if(is_fixed_index(i)) // Skip fixed points (handles or a live drag), they can't move under physics.
                     continue;
-                }
+                const last_x = rope_positions_x[i];
+                rope_positions_x[i] += substep_friction_retention*(rope_positions_x[i] - last_rope_positions_x[i]);
+                last_rope_positions_x[i] = last_x;
 
-                const d = 1 - ROPE_POINT_DISTANCE/distance;
-                const offsetX = dx * d;
-                const offsetY = dy * d;
-
-                const leftFixed = is_fixed_index(i);
-                const rightFixed = is_fixed_index(i + 1);
-                if(leftFixed && rightFixed) {
-                    // both ends held fixed, nothing to adjust
-                } else if(leftFixed) {
-                    rope_positions_x[i + 1] -= offsetX;
-                    rope_positions_y[i + 1] -= offsetY;
-                } else if(rightFixed) {
-                    rope_positions_x[i] += offsetX;
-                    rope_positions_y[i] += offsetY;
-                } else {
-                    rope_positions_x[i] += offsetX/2;
-                    rope_positions_y[i] += offsetY/2;
-                    rope_positions_x[i + 1] -= offsetX/2;
-                    rope_positions_y[i + 1] -= offsetY/2;
-                }
+                const last_y = rope_positions_y[i];
+                rope_positions_y[i] += substep_friction_retention*(rope_positions_y[i] - last_rope_positions_y[i]) + PHYSICS.gravity * sub_dt * sub_dt;
+                last_rope_positions_y[i] = last_y;
             }
-            constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
+
+            // Step 2: Constrain the rope points to a maximum distance from each other
+            for (let count = 0; count < ITERATIONS_PER_SUBSTEP; ++count) {
+                const forward = count % 2 === 0; // alternate sweep direction each iteration to cancel Gauss-Seidel directional bias
+                for (let k = 0; k < rope_positions_x.length - 1; k++) {
+                    const i = forward ? k : (rope_positions_x.length - 2 - k);
+                    if(broken[i])
+                        continue; // this segment has torn, the two sides are independent now
+
+                    const dx = rope_positions_x[i + 1] - rope_positions_x[i];
+                    const dy = rope_positions_y[i + 1] - rope_positions_y[i];
+                    const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
+
+                    if(distance > PHYSICS.tearFactor * segment_strength[i] * ROPE_POINT_DISTANCE) {
+                        broken[i] = true;
+                        continue;
+                    }
+
+                    const d = 1 - ROPE_POINT_DISTANCE/distance;
+                    const offsetX = dx * d;
+                    const offsetY = dy * d;
+
+                    const leftFixed = is_fixed_index(i);
+                    const rightFixed = is_fixed_index(i + 1);
+                    if(leftFixed && rightFixed) {
+                        // both ends held fixed, nothing to adjust
+                    } else if(leftFixed) {
+                        rope_positions_x[i + 1] -= offsetX;
+                        rope_positions_y[i + 1] -= offsetY;
+                    } else if(rightFixed) {
+                        rope_positions_x[i] += offsetX;
+                        rope_positions_y[i] += offsetY;
+                    } else {
+                        rope_positions_x[i] += offsetX/2;
+                        rope_positions_y[i] += offsetY/2;
+                        rope_positions_x[i + 1] -= offsetX/2;
+                        rope_positions_y[i + 1] -= offsetY/2;
+                    }
+                }
+                constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
+            }
         }
 
         apply_contact_friction(rope_positions_x, rope_positions_y, last_rope_positions_x, last_rope_positions_y, canvas.width, canvas.height, PHYSICS.groundFriction);
