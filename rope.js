@@ -8,7 +8,7 @@
     const ROPE_LENGTH = 200;
     const NUM_ROPE_POINTS = 100;
     const ROPE_POINT_DISTANCE = ROPE_LENGTH / NUM_ROPE_POINTS;
-    const GRAVITY = 2000;
+    const GRAVITY = 1000;
     const FRICTION = 0.005;
 
     let rope_positions_y = [...Array(NUM_ROPE_POINTS).keys()].map(i => handles_y[0] + i*ROPE_POINT_DISTANCE); // The current y position of each rope element
@@ -56,7 +56,7 @@
             last_rope_positions_x[i] = last_x;
 
             const last_y = rope_positions_y[i];
-            rope_positions_y[i] += (1-FRICTION)*(rope_positions_y[i] - last_rope_positions_y[i]) + 0.5 * GRAVITY * dt * dt;
+            rope_positions_y[i] += (1-FRICTION)*(rope_positions_y[i] - last_rope_positions_y[i]) + GRAVITY * dt * dt;
             last_rope_positions_y[i] = last_y;
         }
 

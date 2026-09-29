@@ -28,7 +28,7 @@
 
     setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
 
-    const GRAVITY = 2000;
+    const GRAVITY = 1000;
     function draw(ctx, canvas)
     {
         // Clear the background
@@ -89,7 +89,7 @@
             last_cloth_positions_x[i] = last_x;
 
             const last_y = cloth_positions_y[i];
-            cloth_positions_y[i] += (1-FRICTION)*(cloth_positions_y[i] - last_cloth_positions_y[i]) + 0.5 * GRAVITY * dt * dt;
+            cloth_positions_y[i] += (1-FRICTION)*(cloth_positions_y[i] - last_cloth_positions_y[i]) + GRAVITY * dt * dt;
             last_cloth_positions_y[i] = last_y;
 
             const last_z = cloth_positions_z[i];
