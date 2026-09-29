@@ -9,7 +9,8 @@
     --sidebar-width: 350px;
 }
 
-body, html {
+body,
+html {
     height: 100%;
     overflow: hidden;
 }
@@ -17,7 +18,7 @@ body, html {
 body {
     margin: 0;
     min-height: 100vh;
-    display:flex;
+    display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
@@ -30,7 +31,7 @@ body {
 }
 
 .page {
-    display:flex;
+    display: flex;
     flex-direction: column;
     align-items: center;
 }
@@ -49,16 +50,16 @@ body {
     padding: 20px;
     box-sizing: border-box;
     background: var(--surface);
-    box-shadow: 4px 0 16px rgba(0,0,0,0.3);
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.3);
     display: flex;
     flex-direction: column;
     gap: 16px;
-    width: var(--sidebar-width)
+    width: var(--sidebar-width);
 }
 .controls label {
     display: flex;
     align-items: center;
-    gap: 8px
+    gap: 8px;
 }
 .control_label {
     min-width: 60px;
@@ -68,8 +69,8 @@ figure {
     background: var(--surface);
     border-radius: var(--radius);
     padding: 16px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-    margin:0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    margin: 0;
 }
 
 canvas {
@@ -112,12 +113,12 @@ button {
     transition: background-color 0.15s ease;
 }
 button:hover {
-    background: var(--accent)
+    background: var(--accent);
 }
 button:active {
-    transform: scale(0.97)
+    transform: scale(0.97);
 }
 
-input[type="range"] {
+input[type='range'] {
     accent-color: var(--accent);
 }

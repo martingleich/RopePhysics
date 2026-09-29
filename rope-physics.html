@@ -1,59 +1,67 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rope & Cloth Physics</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-</head>
-<body>
-    <aside class="controls">
-        <h2>Settings</h2>
-        <label>
-            <span class="control_label">Gravity</span>
-            <input type="range" id="gravity_slider" min="0" max="3000" step="50">
-            <output id="gravity_value"></output>
-        </label>
-        <label>
-            <span class="control_label">Air<br/>Friction</span>
-            <input type="range" id="friction_slider" min="0" max="0.05" step="0.001">
-            <output id="friction_value"></output>
-        </label>
-        <label>
-            <span class="control_label">Internal<br/>Friction</span>
-            <input type="range" id="internal_friction_slider" min="0" max="3" step="0.05">
-            <output id="internal_friction_value"></output>
-        </label>
-        <label>
-            <span class="control_label">Ground<br/>Friction</span>
-            <input type="range" id="ground_friction_slider" min="0" max="1.0" step="0.01">
-            <output id="ground_friction_value"></output>
-        </label>
-        <label>
-            <span class="control_label">Tear<br/>resistance</span>
-            <input type="range" id="tear_factor_slider" min="1.05" max="5" step="0.05">
-            <output id="tear_factor_value"></output>
-        </label>
-        <button id="reset_button">Reset</button>
-    </aside>
-    <main class="page">
-        <h1>Rope & Cloth Physics</h1>
-        <p class="subtitle">A tiny verlet-integration playground</p>
-        <div class="simulation">
-            <figure>
-                <canvas id="cloth_canvas" width="500" height="300"></canvas>
-                <figcaption>A simple piece of cloth. Drag the handles to move the cloth around.</figcaption>
-            </figure>
-            <figure>
-                <canvas id="rope_canvas" width="500" height="300"></canvas>
-                <figcaption>A simple rope. Drag the handle to move the rope around.<br/>Use the button to add a second handle.</figcaption>
-                <button id="toogle_handle"></button>
-            </figure>
-        </div>
-    </main>
-    <script src="common.js"></script>
-    <script src="rope.js"></script>
-    <script src="cloth.js"></script>
-</body>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Rope & Cloth Physics</title>
+        <link rel="stylesheet" href="style.css" />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body>
+        <aside class="controls">
+            <h2>Settings</h2>
+            <label>
+                <span class="control_label">Gravity</span>
+                <input type="range" id="gravity_slider" min="0" max="3000" step="50" />
+                <output id="gravity_value"></output>
+            </label>
+            <label>
+                <span class="control_label">Air<br />Friction</span>
+                <input type="range" id="friction_slider" min="0" max="0.05" step="0.001" />
+                <output id="friction_value"></output>
+            </label>
+            <label>
+                <span class="control_label">Internal<br />Friction</span>
+                <input type="range" id="internal_friction_slider" min="0" max="3" step="0.05" />
+                <output id="internal_friction_value"></output>
+            </label>
+            <label>
+                <span class="control_label">Ground<br />Friction</span>
+                <input type="range" id="ground_friction_slider" min="0" max="1.0" step="0.01" />
+                <output id="ground_friction_value"></output>
+            </label>
+            <label>
+                <span class="control_label">Tear<br />resistance</span>
+                <input type="range" id="tear_factor_slider" min="1.05" max="5" step="0.05" />
+                <output id="tear_factor_value"></output>
+            </label>
+            <button id="reset_button">Reset</button>
+        </aside>
+        <main class="page">
+            <h1>Rope & Cloth Physics</h1>
+            <p class="subtitle">A tiny verlet-integration playground</p>
+            <div class="simulation">
+                <figure>
+                    <canvas id="cloth_canvas" width="500" height="300"></canvas>
+                    <figcaption>
+                        A simple piece of cloth. Drag the handles to move the cloth around.
+                    </figcaption>
+                </figure>
+                <figure>
+                    <canvas id="rope_canvas" width="500" height="300"></canvas>
+                    <figcaption>
+                        A simple rope. Drag the handle to move the rope around.<br />Use the button
+                        to add a second handle.
+                    </figcaption>
+                    <button id="toogle_handle"></button>
+                </figure>
+            </div>
+        </main>
+        <script src="common.js"></script>
+        <script src="rope.js"></script>
+        <script src="cloth.js"></script>
+    </body>
 </html>
