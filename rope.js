@@ -17,28 +17,12 @@
     let last_rope_positions_x = [...rope_positions_x]; // The last x position of each rope element
     let handle_map = [0, NUM_ROPE_POINTS-1]; // Maps handle ids to rope_pointes
 
-    let isDragging = null; // Is the handle being dragged currently, if so, which one?
-    let drag_offset_x = 0; // X Offset between the mouse and the handle's center
-    let drag_offset_y = 0; // Y Offset between the mouse and the handle's center
+    setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
 
     canvas.addEventListener('mousedown', (event) => {
-        const rect = canvas.getBoundingClientRect();
-        if(event.button === 0) {
-            const mouseX = event.clientX - rect.left;
-            const mouseY = event.clientY - rect.top;
-
-            // Check if the click is within the handle's radius
-            for(let i = 0; i < handles_x.length; i++) {
-                const distance_to_handle = (mouseX - handles_x[i]) ** 2 + (mouseY - handles_y[i]) ** 2;
-                if(distance_to_handle <= HANDLE_RADIUS**2) {
-                    isDragging = i;
-                    drag_offset_x = mouseX - handles_x[i];
-                    drag_offset_y = mouseY - handles_y[i];
-                    break;
-                }
-            }
-        } else if(event.button === 1) {
-            // Right click to add/remove a second handle
+        if(event.button === 1) {
+            // Middle click to add/remove a second handle
+            const rect = canvas.getBoundingClientRect();
             if(handles_x.length < 2) {
                 handles_x.push(event.clientX - rect.left);
                 handles_y.push(event.clientY - rect.top);
@@ -47,22 +31,6 @@
                 handles_y.pop();
             }
         }
-    });
-
-    canvas.addEventListener('mousemove', (event) => {
-        if (isDragging !== null) {
-            const rect = canvas.getBoundingClientRect();
-            handles_x[isDragging] = event.clientX - rect.left - drag_offset_x;
-            handles_y[isDragging] = event.clientY - rect.top - drag_offset_y;
-        }
-    });
-
-    canvas.addEventListener('mouseup', () => {
-        isDragging = null;
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-        isDragging = null;
     });
 
     function animate(dt) {

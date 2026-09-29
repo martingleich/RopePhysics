@@ -2,20 +2,18 @@
 {
     const canvas = document.getElementById('cloth_canvas');
 
-    let handle_pos_x = 100;
-    let handle_pos_y = 50;
-    let handle2_pos_x = 300;
-    let handle2_pos_y = 50;
+    let handles_x = [100, 300];
+    let handles_y = [50, 50];
     const HANDLE_RADIUS = 10;
     const CLOTH_LENGTH = 200;
     const NUM_CLOTH_POINTS = 30;
     const CLOTH_POINT_DISTANCE = CLOTH_LENGTH / (NUM_CLOTH_POINTS-1);
 
     function get_position_x(i) {
-        return handle_pos_x + i % NUM_CLOTH_POINTS * CLOTH_POINT_DISTANCE;
+        return handles_x[0] + i % NUM_CLOTH_POINTS * CLOTH_POINT_DISTANCE;
     }
     function get_position_y(i) {
-        return handle_pos_y + Math.floor(i / NUM_CLOTH_POINTS) * CLOTH_POINT_DISTANCE
+        return handles_y[0] + Math.floor(i / NUM_CLOTH_POINTS) * CLOTH_POINT_DISTANCE
     }
     function is_fixed(i) {
         return i === 0 || i === NUM_CLOTH_POINTS - 1;
@@ -28,53 +26,7 @@
     let last_cloth_positions_x = [...cloth_positions_x]; // The last x position of each rope element
     let last_cloth_positions_z = [...cloth_positions_z]; // The last x position of each rope element
 
-    let isDragging = null; // Is the handle being dragged currently, if so, which one?
-    let drag_offset_x = 0; // X Offset between the mouse and the handle's center
-    let drag_offset_y = 0; // Y Offset between the mouse and the handle's center
-
-    canvas.addEventListener('mousedown', (event) => {
-        const rect = canvas.getBoundingClientRect();
-        if(event.button === 0) {
-            const mouseX = event.clientX - rect.left;
-            const mouseY = event.clientY - rect.top;
-
-            // Check if the click is within the handle's radius
-            const distance_to_handle_1 = (mouseX - handle_pos_x) ** 2 + (mouseY - handle_pos_y) ** 2;
-            const distance_to_handle_2 = (mouseX - handle2_pos_x) ** 2 + (mouseY - handle2_pos_y) ** 2;
-            if(distance_to_handle_1 <= HANDLE_RADIUS**2) {
-                isDragging = 1;
-                drag_offset_x = mouseX - handle_pos_x;
-                drag_offset_y = mouseY - handle_pos_y;
-            } else if(distance_to_handle_2 <= HANDLE_RADIUS**2) {
-                isDragging = 2;
-                drag_offset_x = mouseX - handle2_pos_x;
-                drag_offset_y = mouseY - handle2_pos_y;
-            } else {
-                isDragging = null;
-            }
-        }
-    });
-
-    canvas.addEventListener('mousemove', (event) => {
-        if (isDragging !== null) {
-            const rect = canvas.getBoundingClientRect();
-            if(isDragging === 1) {
-                handle_pos_x = event.clientX - rect.left - drag_offset_x;
-                handle_pos_y = event.clientY - rect.top - drag_offset_y;
-            } else if(isDragging === 2) {
-                handle2_pos_x = event.clientX - rect.left - drag_offset_x;
-                handle2_pos_y = event.clientY - rect.top - drag_offset_y;
-            }
-        }
-    });
-
-    canvas.addEventListener('mouseup', () => {
-        isDragging = null;
-    });
-
-    canvas.addEventListener('mouseleave', () => {
-        isDragging = null;
-    });
+    setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
 
     const GRAVITY = 2000;
     function draw(ctx, canvas)
@@ -87,15 +39,13 @@
         // Draw the handle
         ctx.fillStyle = 'red';
         ctx.beginPath();
-        ctx.arc(handle_pos_x, handle_pos_y, HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.arc(handles_x[0], handles_y[0], HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
         // Draw the second handle
-        if (handle2_pos_x !== null && handle2_pos_y !== null) {
-            ctx.fillStyle = 'green';
-            ctx.beginPath();
-            ctx.arc(handle2_pos_x, handle2_pos_y, HANDLE_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        ctx.fillStyle = 'green';
+        ctx.beginPath();
+        ctx.arc(handles_x[1], handles_y[1], HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
 
         // Draw the cloth
         ctx.strokeStyle = 'white';
@@ -119,14 +69,14 @@
 
     function animate(dt) {
         // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
-        cloth_positions_x[0] = handle_pos_x
-        cloth_positions_y[0] = handle_pos_y;
-        last_cloth_positions_x[0] = handle_pos_x
-        last_cloth_positions_y[0] = handle_pos_y;
-        cloth_positions_x[NUM_CLOTH_POINTS-1] = handle2_pos_x
-        cloth_positions_y[NUM_CLOTH_POINTS-1] = handle2_pos_y;
-        last_cloth_positions_x[NUM_CLOTH_POINTS-1] = handle2_pos_x
-        last_cloth_positions_y[NUM_CLOTH_POINTS-1] = handle2_pos_y;
+        cloth_positions_x[0] = handles_x[0]
+        cloth_positions_y[0] = handles_y[0];
+        last_cloth_positions_x[0] = handles_x[0]
+        last_cloth_positions_y[0] = handles_y[0];
+        cloth_positions_x[NUM_CLOTH_POINTS-1] = handles_x[1]
+        cloth_positions_y[NUM_CLOTH_POINTS-1] = handles_y[1];
+        last_cloth_positions_x[NUM_CLOTH_POINTS-1] = handles_x[1]
+        last_cloth_positions_y[NUM_CLOTH_POINTS-1] = handles_y[1];
 
         // Update the rope positions
         // Step 1: Apply a verlet integration to each rope point.
