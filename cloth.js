@@ -107,7 +107,7 @@
                         const dx = cloth_positions_x[index + 1] - cloth_positions_x[index];
                         const dy = cloth_positions_y[index + 1] - cloth_positions_y[index];
                         const dz = cloth_positions_z[index + 1] - cloth_positions_z[index];
-                        const distance = Math.sqrt(dx ** 2 + dy ** 2 + dz**2);
+                        const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
                         const d = distance - CLOTH_POINT_DISTANCE;
                         const offsetX = (dx / distance) * d / 2;
                         const offsetY = (dy / distance) * d / 2;
@@ -134,7 +134,7 @@
                         const dx = cloth_positions_x[index + NUM_CLOTH_POINTS] - cloth_positions_x[index];
                         const dy = cloth_positions_y[index + NUM_CLOTH_POINTS] - cloth_positions_y[index];
                         const dz = cloth_positions_z[index + NUM_CLOTH_POINTS] - cloth_positions_z[index];
-                        const distance = Math.sqrt(dx ** 2 + dy ** 2 + dz**2);
+                        const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
                         const d = distance - CLOTH_POINT_DISTANCE;
                         const offsetX = (dx / distance) * d / 2;
                         const offsetY = (dy / distance) * d / 2;
@@ -158,7 +158,7 @@
                         const dx = cloth_positions_x[index + NUM_CLOTH_POINTS + 1] - cloth_positions_x[index];
                         const dy = cloth_positions_y[index + NUM_CLOTH_POINTS + 1] - cloth_positions_y[index];
                         const dz = cloth_positions_z[index + NUM_CLOTH_POINTS + 1] - cloth_positions_z[index];
-                        const distance = Math.sqrt(dx ** 2 + dy ** 2 + dz**2);
+                        const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
                         const d = distance - Math.sqrt(2)*CLOTH_POINT_DISTANCE;
                         const offsetX = (dx / distance) * d / 2;
                         const offsetY = (dy / distance) * d / 2;
@@ -182,7 +182,7 @@
                         const dx = cloth_positions_x[index + NUM_CLOTH_POINTS - 1] - cloth_positions_x[index];
                         const dy = cloth_positions_y[index + NUM_CLOTH_POINTS - 1] - cloth_positions_y[index];
                         const dz = cloth_positions_z[index + NUM_CLOTH_POINTS - 1] - cloth_positions_z[index];
-                        const distance = Math.sqrt(dx ** 2 + dy ** 2 + dz**2);
+                        const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2 + dz**2), 0.0001);
                         const d = distance - Math.sqrt(2)*CLOTH_POINT_DISTANCE;
                         const offsetX = (dx / distance) * d / 2;
                         const offsetY = (dy / distance) * d / 2;
