@@ -202,6 +202,8 @@
                 }
             }
         }
+
+        constrain_to_bounds(cloth_positions_x, cloth_positions_y, canvas.width, canvas.height);
     }
 
     main_cycle_if_visible(canvas, draw, animate);

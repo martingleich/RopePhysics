@@ -79,8 +79,10 @@ function setup_handle_dragging(canvas, handles_x, handles_y, handle_radius)
     canvas.addEventListener('mousemove', (event) => {
         if (isDragging !== null) {
             const rect = canvas.getBoundingClientRect();
-            handles_x[isDragging] = event.clientX - rect.left - drag_offset_x;
-            handles_y[isDragging] = event.clientY - rect.top - drag_offset_y;
+            const x = event.clientX - rect.left - drag_offset_x;
+            const y = event.clientY - rect.top - drag_offset_y;
+            handles_x[isDragging] = Math.min(Math.max(x, handle_radius), canvas.width - handle_radius);
+            handles_y[isDragging] = Math.min(Math.max(y, handle_radius), canvas.height - handle_radius);
             return;
         }
         update_hover_cursor(event);
@@ -97,6 +99,13 @@ function setup_handle_dragging(canvas, handles_x, handles_y, handle_radius)
         set_grabbing(false);
         canvas.classList.remove('hover-handle');
     });
+}
+
+function constrain_to_bounds(positions_x, positions_y, width, height) {
+    for (let i = 0; i < positions_x.length; i++) {
+        positions_x[i] = Math.min(Math.max(positions_x[i], 0), width);
+        positions_y[i] = Math.min(Math.max(positions_y[i], 0), height);
+    }
 }
 
 const PHYSICS = {

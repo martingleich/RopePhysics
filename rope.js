@@ -81,6 +81,8 @@
                 }
             }
         }
+
+        constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
     }
     function draw(ctx, canvas)
     {
