@@ -1,0 +1,6 @@
+#!/bin/sh
+# Format staged html/css/js files with prettier and re-stage them.
+files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(html|css|js)$')
+[ -z "$files" ] && exit 0
+echo "$files" | xargs npx --yes prettier@3 --write || exit 1
+echo "$files" | xargs git add
