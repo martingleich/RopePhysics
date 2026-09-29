@@ -47,6 +47,23 @@
         update_buttom_label();
     });
 
+    // Restores the rope to its initial, undamaged, single-handle state.
+    function reset() {
+        handles_x.length = 0;
+        handles_x.push(100);
+        handles_y.length = 0;
+        handles_y.push(50);
+        for(let i = 0; i < NUM_ROPE_POINTS; i++) {
+            rope_positions_x[i] = handles_x[0];
+            rope_positions_y[i] = handles_y[0] + i*ROPE_POINT_DISTANCE;
+            last_rope_positions_x[i] = rope_positions_x[i];
+            last_rope_positions_y[i] = rope_positions_y[i];
+        }
+        broken.fill(false);
+        update_buttom_label();
+    }
+    document.getElementById('reset_button')?.addEventListener('click', reset);
+
     function animate(dt) {
         // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
         for(let i = 0; i < handles_x.length; ++i) {

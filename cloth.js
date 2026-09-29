@@ -58,6 +58,25 @@
         }
     }
 
+    // Restores the cloth to its initial, undamaged, flat layout.
+    function reset() {
+        handles_x[0] = 100; handles_y[0] = 50;
+        handles_x[1] = 300; handles_y[1] = 50;
+        for(let i = 0; i < NUM_CLOTH_POINTS * NUM_CLOTH_POINTS; i++) {
+            cloth_positions_x[i] = get_position_x(i);
+            cloth_positions_y[i] = get_position_y(i);
+            cloth_positions_z[i] = Math.random() - 0.5;
+            last_cloth_positions_x[i] = cloth_positions_x[i];
+            last_cloth_positions_y[i] = cloth_positions_y[i];
+            last_cloth_positions_z[i] = cloth_positions_z[i];
+        }
+        broken_right.fill(false);
+        broken_below.fill(false);
+        broken_diag1.fill(false);
+        broken_diag2.fill(false);
+    }
+    document.getElementById('reset_button')?.addEventListener('click', reset);
+
     function draw(ctx, canvas)
     {
         // Clear the background

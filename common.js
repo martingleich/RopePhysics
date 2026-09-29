@@ -179,6 +179,29 @@ function bind_slider(sliderId, outputId, initialValue, onChange) {
     });
 }
 
+// Same as bind_slider, but the top of the range means "disabled" (Infinity), shown as "Off"
+// instead of a number, so the user has an explicit way to turn tearing off entirely.
+function bind_tear_slider(sliderId, outputId, initialValue, onChange) {
+    const slider = document.getElementById(sliderId);
+    const output = document.getElementById(outputId);
+    const max = parseFloat(slider.max);
+
+    function apply(value) {
+        if(value >= max) {
+            output.textContent = 'Off';
+            onChange(Infinity);
+        } else {
+            output.textContent = value.toFixed(2);
+            onChange(value);
+        }
+    }
+
+    slider.value = Number.isFinite(initialValue) ? initialValue : max;
+    apply(parseFloat(slider.value));
+    slider.addEventListener('input', () => apply(parseFloat(slider.value)));
+}
+
 bind_slider('gravity_slider', 'gravity_value', PHYSICS.gravity, v => PHYSICS.gravity = v);
 bind_slider('friction_slider', 'friction_value', PHYSICS.friction, v => PHYSICS.friction = v);
 bind_slider('ground_friction_slider', 'ground_friction_value', PHYSICS.groundFriction, v => PHYSICS.groundFriction = v);
+bind_tear_slider('tear_factor_slider', 'tear_factor_value', PHYSICS.tearFactor, v => PHYSICS.tearFactor = v);
