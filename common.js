@@ -98,3 +98,23 @@ function setup_handle_dragging(canvas, handles_x, handles_y, handle_radius)
         canvas.classList.remove('hover-handle');
     });
 }
+
+const PHYSICS = {
+    gravity: 1000,
+    friction: 0.005,
+}
+
+function bind_slider(sliderId, outputId, initialValue, onChange) {
+    const slider = document.getElementById(sliderId);
+    const output = document.getElementById(outputId);
+    slider.value = initialValue
+    output.textContent = initialValue
+    slider.addEventListener('input', () => {
+        const value = parseFloat(slider.value);
+        output.textContent = value;
+        onChange(value);
+    });
+}
+
+bind_slider('gravity_slider', 'gravity_value', PHYSICS.gravity, v => PHYSICS.gravity = v);
+bind_slider('friction_slider', 'friction_value', PHYSICS.friction, v => PHYSICS.friction = v);

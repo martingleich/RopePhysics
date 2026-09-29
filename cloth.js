@@ -28,7 +28,6 @@
 
     setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
 
-    const GRAVITY = 1000;
     function draw(ctx, canvas)
     {
         // Clear the background
@@ -80,20 +79,19 @@
 
         // Update the rope positions
         // Step 1: Apply a verlet integration to each rope point.
-        const FRICTION = 0.005;
         for (let i = 0; i < NUM_CLOTH_POINTS * NUM_CLOTH_POINTS; i++) { // Skip the first point, since it is the handle and cannot move
             if(is_fixed(i))
                 continue;
             const last_x = cloth_positions_x[i];
-            cloth_positions_x[i] += (1-FRICTION)*(cloth_positions_x[i] - last_cloth_positions_x[i]);
+            cloth_positions_x[i] += (1-PHYSICS.friction)*(cloth_positions_x[i] - last_cloth_positions_x[i]);
             last_cloth_positions_x[i] = last_x;
 
             const last_y = cloth_positions_y[i];
-            cloth_positions_y[i] += (1-FRICTION)*(cloth_positions_y[i] - last_cloth_positions_y[i]) + GRAVITY * dt * dt;
+            cloth_positions_y[i] += (1-PHYSICS.friction)*(cloth_positions_y[i] - last_cloth_positions_y[i]) + PHYSICS.gravity * dt * dt;
             last_cloth_positions_y[i] = last_y;
 
             const last_z = cloth_positions_z[i];
-            cloth_positions_z[i] += (1-FRICTION)*(cloth_positions_z[i] - last_cloth_positions_z[i]);
+            cloth_positions_z[i] += (1-PHYSICS.friction)*(cloth_positions_z[i] - last_cloth_positions_z[i]);
             last_cloth_positions_z[i] = last_z;
         }
 

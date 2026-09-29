@@ -8,8 +8,6 @@
     const ROPE_LENGTH = 200;
     const NUM_ROPE_POINTS = 100;
     const ROPE_POINT_DISTANCE = ROPE_LENGTH / NUM_ROPE_POINTS;
-    const GRAVITY = 1000;
-    const FRICTION = 0.005;
 
     let rope_positions_y = [...Array(NUM_ROPE_POINTS).keys()].map(i => handles_y[0] + i*ROPE_POINT_DISTANCE); // The current y position of each rope element
     let rope_positions_x = [...Array(NUM_ROPE_POINTS).keys()].map(_ => handles_x[0]); // The current x position of each rope element
@@ -52,11 +50,11 @@
         // Step 1: Apply a verlet integration to each rope point.
         for (let i = 1; i <= NUM_ROPE_POINTS - handles_x.length; i++) { // Skip the first point, since it is the handle and cannot move
             const last_x = rope_positions_x[i];
-            rope_positions_x[i] += (1-FRICTION)*(rope_positions_x[i] - last_rope_positions_x[i]);
+            rope_positions_x[i] += (1-PHYSICS.friction)*(rope_positions_x[i] - last_rope_positions_x[i]);
             last_rope_positions_x[i] = last_x;
 
             const last_y = rope_positions_y[i];
-            rope_positions_y[i] += (1-FRICTION)*(rope_positions_y[i] - last_rope_positions_y[i]) + GRAVITY * dt * dt;
+            rope_positions_y[i] += (1-PHYSICS.friction)*(rope_positions_y[i] - last_rope_positions_y[i]) + PHYSICS.gravity * dt * dt;
             last_rope_positions_y[i] = last_y;
         }
 
