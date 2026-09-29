@@ -19,18 +19,24 @@
 
     setup_handle_dragging(canvas, handles_x, handles_y, HANDLE_RADIUS);
 
-    canvas.addEventListener('mousedown', (event) => {
-        if(event.button === 1) {
-            // Middle click to add/remove a second handle
-            const rect = canvas.getBoundingClientRect();
-            if(handles_x.length < 2) {
-                handles_x.push(event.clientX - rect.left);
-                handles_y.push(event.clientY - rect.top);
-            } else {
-                handles_x.pop();
-                handles_y.pop();
-            }
+    const button = document.getElementById("toogle_handle");
+    function update_buttom_label() {
+        if(handles_x.length < 2) {
+            button.textContent = "Add second handle";
+        } else {
+            button.textContent = "Remove second handle";
         }
+    }
+    update_buttom_label();
+    button?.addEventListener('click', () => {
+        if(handles_x.length < 2) {
+            handles_x.push(150);
+            handles_y.push(50);
+        } else {
+            handles_x.pop();
+            handles_y.pop();
+        }
+        update_buttom_label();
     });
 
     function animate(dt) {

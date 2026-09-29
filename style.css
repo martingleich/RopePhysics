@@ -8,6 +8,11 @@
     --opacity: 0.7;
 }
 
+body, html {
+    height: 100%;
+    overflow: hidden;
+}
+
 body {
     margin: 0;
     min-height: 100vh;
@@ -53,4 +58,25 @@ figcaption {
 .subtitle {
     opacity: var(--opacity);
     margin-top: -8px;
+}
+
+button {
+    margin-top: 8px;
+    appearance: none;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--bg);
+    cursor: pointer;
+    transition: background-color 0.15 ease;
+}
+button:hover {
+    background: var(--accent)
+}
+button:active {
+    transform: scale(0.97)
 }
