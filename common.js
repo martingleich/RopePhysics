@@ -1,13 +1,33 @@
+// The simulation always advances in fixed steps, so its behavior does not depend on the display's
+// frame rate. Each frame runs as many steps as real time demands, but never more than
+// MAX_STEPS_PER_FRAME: on a slow machine the simulation then runs in slow motion instead of
+// spiraling (more steps -> slower frame -> even more steps).
+const FIXED_DT = 1 / 120;
+const MAX_STEPS_PER_FRAME = 2;
+// Tunable rates (friction, damping) are specified relative to this reference frame time.
+const REFERENCE_DT = 1 / 60;
+
+// Calls animate(FIXED_DT, steps_left) once per step and draw(ctx, canvas) once per frame.
+// steps_left counts down to 1 across a frame's steps, so handle motion recorded during the
+// frame can be spread evenly over them.
 function main_cycle_if_visible(canvas, draw, animate) {
     let animationFrameId;
     let lastTime = NaN;
+    let accumulator = 0;
     const ctx = canvas.getContext('2d');
 
     function cycle() {
         var time = performance.now() / 1000;
-        var dt = lastTime ? Math.min(time - lastTime, 1 / 20) : 0;
+        if (lastTime) accumulator += Math.min(time - lastTime, 0.1);
         lastTime = time;
-        if (dt > 0) animate(dt);
+        let steps = Math.floor(accumulator / FIXED_DT);
+        if (steps > MAX_STEPS_PER_FRAME) {
+            steps = MAX_STEPS_PER_FRAME;
+            accumulator = 0; // drop the backlog instead of trying to catch up
+        } else {
+            accumulator -= steps * FIXED_DT;
+        }
+        for (let i = 0; i < steps; i++) animate(FIXED_DT, steps - i);
         draw(ctx, canvas);
         animationFrameId = requestAnimationFrame(cycle);
     }
@@ -19,6 +39,8 @@ function main_cycle_if_visible(canvas, draw, animate) {
                 // Stop animation if canvas is not visible
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
+                lastTime = NaN; // don't count the time spent hidden as elapsed simulation time
+                accumulator = 0;
             }
         });
     });
@@ -168,7 +190,8 @@ function constrain_to_bounds(positions_x, positions_y, width, height) {
 }
 
 // Dampens the tangential (sliding) velocity of points touching a boundary, then clamps positions.
-// Call this once per frame (not per solver iteration), otherwise the damping compounds far too fast.
+// Call this once per step (not per solver iteration), otherwise the damping compounds far too fast.
+// `friction` is the damping per REFERENCE_DT; dt is the time this call covers.
 function apply_contact_friction(
     positions_x,
     positions_y,
@@ -176,8 +199,10 @@ function apply_contact_friction(
     last_positions_y,
     width,
     height,
-    friction
+    friction,
+    dt
 ) {
+    friction = 1 - Math.pow(1 - friction, dt / REFERENCE_DT);
     for (let i = 0; i < positions_x.length; i++) {
         if (positions_y[i] < 0 || positions_y[i] > height) {
             // touching ceiling or floor: dampen horizontal sliding
@@ -195,11 +220,13 @@ function apply_contact_friction(
 
 const PHYSICS = {
     gravity: 1000,
-    friction: 0.005, // air friction: damps each point's absolute velocity (slows everything, including bulk motion)
-    internalFriction: 1.5, // damps relative velocity between connected points only - kills whip-like waves
+    friction: 0.005, // air friction: damps each point's absolute velocity (slows everything, including bulk motion). Fraction lost per 1/60 s
+    // Internal friction is a rate: the relative velocity between neighbors decays as exp(-internalFriction * t * INTERNAL_FRICTION_RATE)
+
+    internalFriction: 2.0, // damps relative velocity between connected points only - kills whip-like waves
     // traveling along the rope/cloth without making bulk movement feel sluggish
     groundFriction: 0.3,
-    tearFactor: 1.8, // a constraint breaks permanently once stretched beyond this multiple of its rest length
+    tearFactor: 2.5 // a constraint breaks permanently once stretched beyond this multiple of its rest length
 };
 
 function bind_slider(sliderId, outputId, initialValue, onChange) {
