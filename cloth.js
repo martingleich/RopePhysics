@@ -13,47 +13,86 @@
     const THREAD_BIAS_VERTICAL = 0.8; // vertical ("warp") connections are inherently a bit weaker than horizontal ("weft") ones
     const STRENGTH_VARIANCE = 0.35; // +/-35% random per-connection strength on top of the bias, so no two threads are identical
 
+    const NUM_POINTS = NUM_CLOTH_POINTS * NUM_CLOTH_POINTS;
+    const cloth_positions_x = new Float64Array(NUM_POINTS); // The current x position of each cloth point
+    const cloth_positions_y = new Float64Array(NUM_POINTS); // The current y position of each cloth point
+    const cloth_positions_z = new Float64Array(NUM_POINTS); // The current z position of each cloth point
+    const last_cloth_positions_x = new Float64Array(NUM_POINTS);
+    const last_cloth_positions_y = new Float64Array(NUM_POINTS);
+    const last_cloth_positions_z = new Float64Array(NUM_POINTS);
+    // Inverse mass: 0 for a point held fixed (top row / live drag), 1 otherwise. Recomputed once
+    // per substep, so the solver's inner loop needs no per-constraint "is this fixed?" lookups.
+    const inv_mass = new Float64Array(NUM_POINTS);
+
     function get_position_x(i) {
         return handles_x[0] + (i % NUM_CLOTH_POINTS) * CLOTH_POINT_DISTANCE;
     }
     function get_position_y(i) {
         return handles_y[0] + Math.floor(i / NUM_CLOTH_POINTS) * CLOTH_POINT_DISTANCE;
     }
-    let cloth_positions_y = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map((i) =>
-        get_position_y(i)
-    ); // The current y position of each rope element
-    let cloth_positions_x = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map((i) =>
-        get_position_x(i)
-    ); // The current x position of each rope element
-    let cloth_positions_z = [...Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).keys()].map(
-        (i) => Math.random() - 0.5
-    ); // The current z position of each rope element
-    let last_cloth_positions_y = [...cloth_positions_y]; // The last y position of each rope element
-    let last_cloth_positions_x = [...cloth_positions_x]; // The last x position of each rope element
-    let last_cloth_positions_z = [...cloth_positions_z]; // The last x position of each rope element
 
-    // broken_X[index]: true once that connection (from point `index` to its neighbor) has torn
-    let broken_right = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false);
-    let broken_below = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false);
-    let broken_diag1 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false); // top-left to bottom-right
-    let broken_diag2 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS).fill(false); // top-right to bottom-left
-
-    // strength_X[index]: per-connection random tear-resistance multiplier (see randomize_strength)
-    let strength_right = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS);
-    let strength_below = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS);
-    let strength_diag1 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS);
-    let strength_diag2 = new Array(NUM_CLOTH_POINTS * NUM_CLOTH_POINTS);
-
-    function randomize_strength() {
-        for (let i = 0; i < strength_right.length; i++) {
-            const variance = () => 1 + (Math.random() - 0.5) * STRENGTH_VARIANCE;
-            strength_right[i] = variance();
-            strength_below[i] = THREAD_BIAS_VERTICAL * variance();
-            strength_diag1[i] = variance();
-            strength_diag2[i] = variance();
+    // Flat constraint list, built once. Kinds 0/1 are the structural grid (right, below), kinds
+    // 2/3 the diagonal shear connections (top-left to bottom-right, top-right to bottom-left).
+    const KIND_RIGHT = 0,
+        KIND_BELOW = 1,
+        KIND_DIAG1 = 2,
+        KIND_DIAG2 = 3;
+    const list_a = [];
+    const list_b = [];
+    const list_kind = [];
+    for (let r = 0; r < NUM_CLOTH_POINTS; r++) {
+        for (let c = 0; c < NUM_CLOTH_POINTS; c++) {
+            const index = r * NUM_CLOTH_POINTS + c;
+            const add = (other, kind) => {
+                list_a.push(index);
+                list_b.push(other);
+                list_kind.push(kind);
+            };
+            if (c < NUM_CLOTH_POINTS - 1) add(index + 1, KIND_RIGHT);
+            if (r < NUM_CLOTH_POINTS - 1) add(index + NUM_CLOTH_POINTS, KIND_BELOW);
+            if (r < NUM_CLOTH_POINTS - 1 && c < NUM_CLOTH_POINTS - 1)
+                add(index + NUM_CLOTH_POINTS + 1, KIND_DIAG1);
+            if (r < NUM_CLOTH_POINTS - 1 && c > 0) add(index + NUM_CLOTH_POINTS - 1, KIND_DIAG2);
         }
     }
-    randomize_strength();
+    const NUM_CONSTRAINTS = list_a.length;
+    const cA = Uint32Array.from(list_a);
+    const cB = Uint32Array.from(list_b);
+    const cKind = Uint8Array.from(list_kind);
+    const cRest = new Float64Array(NUM_CONSTRAINTS); // rest length of each connection
+    for (let k = 0; k < NUM_CONSTRAINTS; k++)
+        cRest[k] = cKind[k] >= KIND_DIAG1 ? Math.SQRT2 * CLOTH_POINT_DISTANCE : CLOTH_POINT_DISTANCE;
+    // cLimit[k]: rest length times the per-connection random tear-resistance multiplier. The
+    // connection tears permanently once stretched beyond PHYSICS.tearFactor * cLimit[k].
+    const cLimit = new Float64Array(NUM_CONSTRAINTS);
+    const cBroken = new Uint8Array(NUM_CONSTRAINTS); // 1 once that connection has torn
+
+    function randomize_strength() {
+        for (let k = 0; k < NUM_CONSTRAINTS; k++) {
+            const variance = 1 + (Math.random() - 0.5) * STRENGTH_VARIANCE;
+            cLimit[k] = cRest[k] * variance * (cKind[k] === KIND_BELOW ? THREAD_BIAS_VERTICAL : 1);
+        }
+    }
+
+    // Restores the cloth to its initial, undamaged, flat layout.
+    function reset() {
+        handles_x[0] = 100;
+        handles_y[0] = 50;
+        handles_x[1] = 300;
+        handles_y[1] = 50;
+        for (let i = 0; i < NUM_POINTS; i++) {
+            cloth_positions_x[i] = get_position_x(i);
+            cloth_positions_y[i] = get_position_y(i);
+            cloth_positions_z[i] = Math.random() - 0.5;
+            last_cloth_positions_x[i] = cloth_positions_x[i];
+            last_cloth_positions_y[i] = cloth_positions_y[i];
+            last_cloth_positions_z[i] = cloth_positions_z[i];
+        }
+        cBroken.fill(0);
+        randomize_strength();
+    }
+    reset();
+    document.getElementById('reset_button')?.addEventListener('click', reset);
 
     const drag = setup_dragging(
         canvas,
@@ -65,41 +104,56 @@
         HANDLE_RADIUS
     );
 
-    // Is this point currently held fixed, either by being anchored along the top row
-    // (like a curtain hung from a rod - not just the two corners) or a live drag?
-    function is_fixed(i) {
-        return i < NUM_CLOTH_POINTS || drag.is_point_pinned(i);
+    // Distance constraints, relaxed Gauss-Seidel style. Fixed points have inv_mass 0, so they
+    // never move and the free end takes the whole correction.
+    function solve_constraints(forward) {
+        const tear = PHYSICS.tearFactor;
+        for (let j = 0; j < NUM_CONSTRAINTS; j++) {
+            const k = forward ? j : NUM_CONSTRAINTS - 1 - j;
+            if (cBroken[k] === 1) continue;
+            const a = cA[k],
+                b = cB[k];
+            const dx = cloth_positions_x[b] - cloth_positions_x[a];
+            const dy = cloth_positions_y[b] - cloth_positions_y[a];
+            const dz = cloth_positions_z[b] - cloth_positions_z[a];
+            const dist_sq = dx * dx + dy * dy + dz * dz;
+            const limit = tear * cLimit[k];
+            if (dist_sq > limit * limit) {
+                cBroken[k] = 1;
+                continue;
+            }
+            const wa = inv_mass[a],
+                wb = inv_mass[b];
+            const w_sum = wa + wb;
+            if (w_sum === 0) continue; // both ends held fixed, nothing to adjust
+            const distance = Math.max(Math.sqrt(dist_sq), 0.0001);
+            const s = (distance - cRest[k]) / (distance * w_sum);
+            const ca = s * wa,
+                cb = s * wb;
+            cloth_positions_x[a] += dx * ca;
+            cloth_positions_y[a] += dy * ca;
+            cloth_positions_z[a] += dz * ca;
+            cloth_positions_x[b] -= dx * cb;
+            cloth_positions_y[b] -= dy * cb;
+            cloth_positions_z[b] -= dz * cb;
+        }
     }
 
-    // Applies a distance-constraint correction between points a and b, respecting whether either is fixed.
-    function apply_correction(a, b, offsetX, offsetY, offsetZ) {
-        const aFixed = is_fixed(a),
-            bFixed = is_fixed(b);
-        if (aFixed && bFixed) {
-            // both ends held fixed, nothing to adjust
-        } else if (aFixed) {
-            cloth_positions_x[b] -= 2 * offsetX;
-            cloth_positions_y[b] -= 2 * offsetY;
-            cloth_positions_z[b] -= 2 * offsetZ;
-        } else if (bFixed) {
-            cloth_positions_x[a] += 2 * offsetX;
-            cloth_positions_y[a] += 2 * offsetY;
-            cloth_positions_z[a] += 2 * offsetZ;
-        } else {
-            cloth_positions_x[a] += offsetX;
-            cloth_positions_y[a] += offsetY;
-            cloth_positions_z[a] += offsetZ;
-            cloth_positions_x[b] -= offsetX;
-            cloth_positions_y[b] -= offsetY;
-            cloth_positions_z[b] -= offsetZ;
-        }
-
-        // Internal friction: damp the RELATIVE velocity between this pair, right here inside the
-        // solver's own relaxation (applying it only once per substep, after the solver, turned out
-        // too late to matter for the rope - the tear-check already sees the un-damped transient
-        // distances). Kills whip-like waves without resisting the cloth's overall bulk motion.
-        if (PHYSICS.internalFriction > 0 && !(aFixed && bFixed)) {
-            const damp = PHYSICS.internalFriction / ITERATIONS_PER_SUBSTEP;
+    // Internal friction: damp the RELATIVE velocity between connected points. Kills whip-like
+    // waves without resisting the cloth's overall bulk motion. Applied once per substep, after
+    // the solver has settled; 1 - exp(-friction) is the closed form of damping compounded over
+    // the solver's iterations, and stays stable for any slider value.
+    function apply_internal_friction() {
+        if (PHYSICS.internalFriction <= 0) return;
+        const damp = 1 - Math.exp(-PHYSICS.internalFriction);
+        for (let k = 0; k < NUM_CONSTRAINTS; k++) {
+            if (cBroken[k] === 1) continue;
+            const a = cA[k],
+                b = cB[k];
+            const wa = inv_mass[a],
+                wb = inv_mass[b];
+            const w_sum = wa + wb;
+            if (w_sum === 0) continue;
             const rel_vx =
                 cloth_positions_x[b] -
                 last_cloth_positions_x[b] -
@@ -112,46 +166,16 @@
                 cloth_positions_z[b] -
                 last_cloth_positions_z[b] -
                 (cloth_positions_z[a] - last_cloth_positions_z[a]);
-            if (aFixed) {
-                last_cloth_positions_x[b] += damp * rel_vx;
-                last_cloth_positions_y[b] += damp * rel_vy;
-                last_cloth_positions_z[b] += damp * rel_vz;
-            } else if (bFixed) {
-                last_cloth_positions_x[a] -= damp * rel_vx;
-                last_cloth_positions_y[a] -= damp * rel_vy;
-                last_cloth_positions_z[a] -= damp * rel_vz;
-            } else {
-                last_cloth_positions_x[a] -= damp * 0.5 * rel_vx;
-                last_cloth_positions_y[a] -= damp * 0.5 * rel_vy;
-                last_cloth_positions_z[a] -= damp * 0.5 * rel_vz;
-                last_cloth_positions_x[b] += damp * 0.5 * rel_vx;
-                last_cloth_positions_y[b] += damp * 0.5 * rel_vy;
-                last_cloth_positions_z[b] += damp * 0.5 * rel_vz;
-            }
+            const fa = (damp * wa) / w_sum,
+                fb = (damp * wb) / w_sum;
+            last_cloth_positions_x[a] -= fa * rel_vx;
+            last_cloth_positions_y[a] -= fa * rel_vy;
+            last_cloth_positions_z[a] -= fa * rel_vz;
+            last_cloth_positions_x[b] += fb * rel_vx;
+            last_cloth_positions_y[b] += fb * rel_vy;
+            last_cloth_positions_z[b] += fb * rel_vz;
         }
     }
-
-    // Restores the cloth to its initial, undamaged, flat layout.
-    function reset() {
-        handles_x[0] = 100;
-        handles_y[0] = 50;
-        handles_x[1] = 300;
-        handles_y[1] = 50;
-        for (let i = 0; i < NUM_CLOTH_POINTS * NUM_CLOTH_POINTS; i++) {
-            cloth_positions_x[i] = get_position_x(i);
-            cloth_positions_y[i] = get_position_y(i);
-            cloth_positions_z[i] = Math.random() - 0.5;
-            last_cloth_positions_x[i] = cloth_positions_x[i];
-            last_cloth_positions_y[i] = cloth_positions_y[i];
-            last_cloth_positions_z[i] = cloth_positions_z[i];
-        }
-        broken_right.fill(false);
-        broken_below.fill(false);
-        broken_diag1.fill(false);
-        broken_diag2.fill(false);
-        randomize_strength();
-    }
-    document.getElementById('reset_button')?.addEventListener('click', reset);
 
     function draw(ctx, canvas) {
         // Clear the background
@@ -170,54 +194,22 @@
         ctx.arc(handles_x[1], handles_y[1], HANDLE_RADIUS, 0, Math.PI * 2);
         ctx.fill();
 
-        // Draw the cloth's structural grid (right/below)
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (let r = 0; r < NUM_CLOTH_POINTS; r++) {
-            for (let c = 0; c < NUM_CLOTH_POINTS; c++) {
-                const index = r * NUM_CLOTH_POINTS + c;
-                if (c < NUM_CLOTH_POINTS - 1 && !broken_right[index]) {
-                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
-                    ctx.lineTo(cloth_positions_x[index + 1], cloth_positions_y[index + 1]);
-                }
-                if (r < NUM_CLOTH_POINTS - 1 && !broken_below[index]) {
-                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
-                    ctx.lineTo(
-                        cloth_positions_x[index + NUM_CLOTH_POINTS],
-                        cloth_positions_y[index + NUM_CLOTH_POINTS]
-                    );
-                }
+        // Draw the structural grid (right/below), then the diagonal (shear) connections,
+        // faintly. The shear connections are real physics constraints too - without drawing
+        // them, a patch held only by a diagonal (its structural neighbors all torn away) looks
+        // like it's floating disconnected, when it's actually still tethered.
+        for (let pass = 0; pass < 2; pass++) {
+            const shear = pass === 1;
+            ctx.strokeStyle = shear ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.75)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            for (let k = 0; k < NUM_CONSTRAINTS; k++) {
+                if (cBroken[k] === 1 || cKind[k] >= KIND_DIAG1 !== shear) continue;
+                ctx.moveTo(cloth_positions_x[cA[k]], cloth_positions_y[cA[k]]);
+                ctx.lineTo(cloth_positions_x[cB[k]], cloth_positions_y[cB[k]]);
             }
+            ctx.stroke();
         }
-        ctx.stroke();
-
-        // Also draw the diagonal (shear) connections, faintly. They're real physics constraints
-        // too - without drawing them, a patch held only by a diagonal (its structural neighbors
-        // all torn away) looks like it's floating disconnected, when it's actually still tethered.
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        for (let r = 0; r < NUM_CLOTH_POINTS; r++) {
-            for (let c = 0; c < NUM_CLOTH_POINTS; c++) {
-                const index = r * NUM_CLOTH_POINTS + c;
-                if (r < NUM_CLOTH_POINTS - 1 && c < NUM_CLOTH_POINTS - 1 && !broken_diag1[index]) {
-                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
-                    ctx.lineTo(
-                        cloth_positions_x[index + NUM_CLOTH_POINTS + 1],
-                        cloth_positions_y[index + NUM_CLOTH_POINTS + 1]
-                    );
-                }
-                if (r < NUM_CLOTH_POINTS - 1 && c > 0 && !broken_diag2[index]) {
-                    ctx.moveTo(cloth_positions_x[index], cloth_positions_y[index]);
-                    ctx.lineTo(
-                        cloth_positions_x[index + NUM_CLOTH_POINTS - 1],
-                        cloth_positions_y[index + NUM_CLOTH_POINTS - 1]
-                    );
-                }
-            }
-        }
-        ctx.stroke();
     }
 
     function animate(dt) {
@@ -240,7 +232,7 @@
         for (let step = 0; step < SUBSTEPS; step++) {
             const t = (step + 1) / SUBSTEPS;
 
-            // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
+            // Update the cloth-position with the handle, also force the last position, since we don't want the cloth to accelerate.
             cloth_positions_x[0] = handle_start_x[0] + (handles_x[0] - handle_start_x[0]) * t;
             cloth_positions_y[0] = handle_start_y[0] + (handles_y[0] - handle_start_y[0]) * t;
             last_cloth_positions_x[0] = cloth_positions_x[0];
@@ -275,11 +267,14 @@
                 last_cloth_positions_y[point_target.idx] = cloth_positions_y[point_target.idx];
             }
 
-            // Update the rope positions
-            // Step 1: Apply a verlet integration to each rope point.
-            for (let i = 0; i < NUM_CLOTH_POINTS * NUM_CLOTH_POINTS; i++) {
-                // Skip the first point, since it is the handle and cannot move
-                if (is_fixed(i)) continue;
+            // Inverse masses for this substep: the top row and a live-dragged point are fixed.
+            inv_mass.fill(1);
+            inv_mass.fill(0, 0, NUM_CLOTH_POINTS);
+            if (point_target) inv_mass[point_target.idx] = 0;
+
+            // Step 1: Apply a verlet integration to each cloth point (fixed points can't move).
+            for (let i = 0; i < NUM_POINTS; i++) {
+                if (inv_mass[i] === 0) continue;
                 const last_x = cloth_positions_x[i];
                 cloth_positions_x[i] +=
                     substep_friction_retention * (cloth_positions_x[i] - last_cloth_positions_x[i]);
@@ -298,120 +293,13 @@
                 last_cloth_positions_z[i] = last_z;
             }
 
-            // Step 2: Constrain the rope points to a maximum distance from each other
+            // Step 2: Constrain the cloth points to a fixed distance from each other. The sweep
+            // direction alternates each iteration to cancel Gauss-Seidel directional bias.
             for (let count = 0; count < ITERATIONS_PER_SUBSTEP; ++count) {
-                const forward = count % 2 === 0; // alternate sweep direction each iteration to cancel Gauss-Seidel directional bias
-                // Foreach connection between two points
-                for (let rr = 0; rr < NUM_CLOTH_POINTS; rr++) {
-                    const r = forward ? rr : NUM_CLOTH_POINTS - 1 - rr;
-                    for (let cc = 0; cc < NUM_CLOTH_POINTS; cc++) {
-                        const c = forward ? cc : NUM_CLOTH_POINTS - 1 - cc;
-                        const index = r * NUM_CLOTH_POINTS + c;
-                        if (c < NUM_CLOTH_POINTS - 1 && !broken_right[index]) {
-                            // Visit to the right
-                            const b = index + 1;
-                            const dx = cloth_positions_x[b] - cloth_positions_x[index];
-                            const dy = cloth_positions_y[b] - cloth_positions_y[index];
-                            const dz = cloth_positions_z[b] - cloth_positions_z[index];
-                            const distance = Math.max(
-                                Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2),
-                                0.0001
-                            );
-
-                            if (
-                                distance >
-                                PHYSICS.tearFactor * strength_right[index] * CLOTH_POINT_DISTANCE
-                            ) {
-                                broken_right[index] = true;
-                            } else {
-                                const d = distance - CLOTH_POINT_DISTANCE;
-                                const offsetX = ((dx / distance) * d) / 2;
-                                const offsetY = ((dy / distance) * d) / 2;
-                                const offsetZ = ((dz / distance) * d) / 2;
-                                apply_correction(index, b, offsetX, offsetY, offsetZ);
-                            }
-                        }
-                        if (r < NUM_CLOTH_POINTS - 1 && !broken_below[index]) {
-                            // Visit below
-                            const b = index + NUM_CLOTH_POINTS;
-                            const dx = cloth_positions_x[b] - cloth_positions_x[index];
-                            const dy = cloth_positions_y[b] - cloth_positions_y[index];
-                            const dz = cloth_positions_z[b] - cloth_positions_z[index];
-                            const distance = Math.max(
-                                Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2),
-                                0.0001
-                            );
-
-                            if (
-                                distance >
-                                PHYSICS.tearFactor * strength_below[index] * CLOTH_POINT_DISTANCE
-                            ) {
-                                broken_below[index] = true;
-                            } else {
-                                const d = distance - CLOTH_POINT_DISTANCE;
-                                const offsetX = ((dx / distance) * d) / 2;
-                                const offsetY = ((dy / distance) * d) / 2;
-                                const offsetZ = ((dz / distance) * d) / 2;
-                                apply_correction(index, b, offsetX, offsetY, offsetZ);
-                            }
-                        }
-                        // Visit diagonal(top left to buttom right)
-                        if (
-                            r < NUM_CLOTH_POINTS - 1 &&
-                            c < NUM_CLOTH_POINTS - 1 &&
-                            !broken_diag1[index]
-                        ) {
-                            const b = index + NUM_CLOTH_POINTS + 1;
-                            const dx = cloth_positions_x[b] - cloth_positions_x[index];
-                            const dy = cloth_positions_y[b] - cloth_positions_y[index];
-                            const dz = cloth_positions_z[b] - cloth_positions_z[index];
-                            const distance = Math.max(
-                                Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2),
-                                0.0001
-                            );
-                            const rest = Math.sqrt(2) * CLOTH_POINT_DISTANCE;
-
-                            if (distance > PHYSICS.tearFactor * strength_diag1[index] * rest) {
-                                broken_diag1[index] = true;
-                            } else {
-                                const d = distance - rest;
-                                const offsetX = ((dx / distance) * d) / 2;
-                                const offsetY = ((dy / distance) * d) / 2;
-                                const offsetZ = ((dz / distance) * d) / 2;
-                                apply_correction(index, b, offsetX, offsetY, offsetZ);
-                            }
-                        }
-                        // Visit diagonal(top right to buttom left)
-                        if (r < NUM_CLOTH_POINTS - 1 && c > 0 && !broken_diag2[index]) {
-                            const b = index + NUM_CLOTH_POINTS - 1;
-                            const dx = cloth_positions_x[b] - cloth_positions_x[index];
-                            const dy = cloth_positions_y[b] - cloth_positions_y[index];
-                            const dz = cloth_positions_z[b] - cloth_positions_z[index];
-                            const distance = Math.max(
-                                Math.sqrt(dx ** 2 + dy ** 2 + dz ** 2),
-                                0.0001
-                            );
-                            const rest = Math.sqrt(2) * CLOTH_POINT_DISTANCE;
-
-                            if (distance > PHYSICS.tearFactor * strength_diag2[index] * rest) {
-                                broken_diag2[index] = true;
-                            } else {
-                                const d = distance - rest;
-                                const offsetX = ((dx / distance) * d) / 2;
-                                const offsetY = ((dy / distance) * d) / 2;
-                                const offsetZ = ((dz / distance) * d) / 2;
-                                apply_correction(index, b, offsetX, offsetY, offsetZ);
-                            }
-                        }
-                    }
-                }
-                constrain_to_bounds(
-                    cloth_positions_x,
-                    cloth_positions_y,
-                    canvas.width,
-                    canvas.height
-                );
+                solve_constraints(count % 2 === 0);
             }
+            constrain_to_bounds(cloth_positions_x, cloth_positions_y, canvas.width, canvas.height);
+            apply_internal_friction();
         }
 
         apply_contact_friction(

@@ -12,12 +12,16 @@
     const ITERATIONS_PER_SUBSTEP = 50; // 8*50 = 400, same total solver work as before substepping
     const STRENGTH_VARIANCE = 0.4; // +/-40% random per-segment strength, so segments aren't perfectly uniform
 
-    let rope_positions_y = [...Array(NUM_ROPE_POINTS).keys()].map(
-        (i) => handles_y[0] + i * ROPE_POINT_DISTANCE
+    const rope_positions_y = Float64Array.from(
+        { length: NUM_ROPE_POINTS },
+        (_, i) => handles_y[0] + i * ROPE_POINT_DISTANCE
     ); // The current y position of each rope element
-    let rope_positions_x = [...Array(NUM_ROPE_POINTS).keys()].map((_) => handles_x[0]); // The current x position of each rope element
-    let last_rope_positions_y = [...rope_positions_y]; // The last y position of each rope element
-    let last_rope_positions_x = [...rope_positions_x]; // The last x position of each rope element
+    const rope_positions_x = new Float64Array(NUM_ROPE_POINTS).fill(handles_x[0]); // The current x position of each rope element
+    const last_rope_positions_y = Float64Array.from(rope_positions_y); // The last y position of each rope element
+    const last_rope_positions_x = Float64Array.from(rope_positions_x); // The last x position of each rope element
+    // Inverse mass: 0 for a point held fixed (handle or live drag), 1 otherwise. Recomputed once
+    // per substep, so the solver's inner loop needs no per-segment "is this fixed?" lookups.
+    const inv_mass = new Float64Array(NUM_ROPE_POINTS);
     let handle_map = [0, NUM_ROPE_POINTS - 1]; // Maps handle ids to rope_pointes
     let broken = new Array(NUM_ROPE_POINTS - 1).fill(false); // broken[i]: true once the segment between point i and i+1 has torn
     let segment_strength = new Array(NUM_ROPE_POINTS - 1); // per-segment random tear-resistance multiplier
@@ -37,14 +41,6 @@
         rope_positions_y,
         HANDLE_RADIUS
     );
-
-    // Is this point currently held fixed, either by a named handle or a live drag?
-    function is_fixed_index(i) {
-        for (let h = 0; h < handles_x.length; h++) {
-            if (handle_map[h] === i) return true;
-        }
-        return drag.is_point_pinned(i);
-    }
 
     const button = document.getElementById('toogle_handle');
     function update_buttom_label() {
@@ -86,6 +82,69 @@
     }
     document.getElementById('reset_button')?.addEventListener('click', reset);
 
+    // Distance constraints, relaxed Gauss-Seidel style. Fixed points have inv_mass 0, so they
+    // never move and the free end takes the whole correction.
+    function solve_segments(forward) {
+        const tear = PHYSICS.tearFactor;
+        const last = NUM_ROPE_POINTS - 1;
+        for (let k = 0; k < last; k++) {
+            const i = forward ? k : last - 1 - k;
+            if (broken[i]) continue; // this segment has torn, the two sides are independent now
+
+            const dx = rope_positions_x[i + 1] - rope_positions_x[i];
+            const dy = rope_positions_y[i + 1] - rope_positions_y[i];
+            const dist_sq = dx * dx + dy * dy;
+            const limit = tear * segment_strength[i] * ROPE_POINT_DISTANCE;
+            if (dist_sq > limit * limit) {
+                broken[i] = true;
+                continue;
+            }
+
+            const wa = inv_mass[i],
+                wb = inv_mass[i + 1];
+            const w_sum = wa + wb;
+            if (w_sum === 0) continue; // both ends held fixed, nothing to adjust
+            const distance = Math.max(Math.sqrt(dist_sq), 0.0001);
+            const s = (1 - ROPE_POINT_DISTANCE / distance) / w_sum;
+            rope_positions_x[i] += dx * s * wa;
+            rope_positions_y[i] += dy * s * wa;
+            rope_positions_x[i + 1] -= dx * s * wb;
+            rope_positions_y[i + 1] -= dy * s * wb;
+        }
+    }
+
+    // Internal friction: damp the RELATIVE velocity between neighboring points. This kills
+    // whip-like waves traveling along the rope without resisting its bulk motion through space
+    // (where neighbors move together and relative velocity is already near zero) - that's what
+    // air friction is for, and why cranking air friction up made the whole rope feel sluggish.
+    // Applied once per substep, after the solver has settled; 1 - exp(-friction) is the closed
+    // form of damping compounded over the solver's iterations, and stays stable for any value.
+    function apply_internal_friction() {
+        if (PHYSICS.internalFriction <= 0) return;
+        const damp = 1 - Math.exp(-PHYSICS.internalFriction);
+        for (let i = 0; i < NUM_ROPE_POINTS - 1; i++) {
+            if (broken[i]) continue;
+            const wa = inv_mass[i],
+                wb = inv_mass[i + 1];
+            const w_sum = wa + wb;
+            if (w_sum === 0) continue;
+            const rel_vx =
+                rope_positions_x[i + 1] -
+                last_rope_positions_x[i + 1] -
+                (rope_positions_x[i] - last_rope_positions_x[i]);
+            const rel_vy =
+                rope_positions_y[i + 1] -
+                last_rope_positions_y[i + 1] -
+                (rope_positions_y[i] - last_rope_positions_y[i]);
+            const fa = (damp * wa) / w_sum,
+                fb = (damp * wb) / w_sum;
+            last_rope_positions_x[i] -= fa * rel_vx;
+            last_rope_positions_y[i] -= fa * rel_vy;
+            last_rope_positions_x[i + 1] += fb * rel_vx;
+            last_rope_positions_y[i + 1] += fb * rel_vy;
+        }
+    }
+
     function animate(dt) {
         const sub_dt = dt / SUBSTEPS;
 
@@ -102,11 +161,6 @@
         // substep - so take the SUBSTEPS-th root here, otherwise the damping compounds to
         // (1-friction)^SUBSTEPS per frame instead of the intended (1-friction).
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, 1 / SUBSTEPS);
-        // Internal friction is applied inside Step 2's iteration loop below (not once per
-        // substep) - it has to influence the solver's own relaxation to actually suppress
-        // whip-wave propagation; applied only afterward, it's too late to matter.
-        const internal_damp_per_iteration = PHYSICS.internalFriction / ITERATIONS_PER_SUBSTEP;
-
         for (let step = 0; step < SUBSTEPS; step++) {
             const t = (step + 1) / SUBSTEPS;
 
@@ -129,12 +183,14 @@
                 last_rope_positions_y[point_target.idx] = rope_positions_y[point_target.idx];
             }
 
-            // Update the rope positions
-            // Step 1: Apply a verlet integration to each rope point.
+            // Inverse masses for this substep: handles and a live-dragged point are fixed.
+            inv_mass.fill(1);
+            for (let i = 0; i < handles_x.length; ++i) inv_mass[handle_map[i]] = 0;
+            if (point_target) inv_mass[point_target.idx] = 0;
+
+            // Step 1: Apply a verlet integration to each rope point (fixed points can't move).
             for (let i = 0; i < NUM_ROPE_POINTS; i++) {
-                if (is_fixed_index(i))
-                    // Skip fixed points (handles or a live drag), they can't move under physics.
-                    continue;
+                if (inv_mass[i] === 0) continue;
                 const last_x = rope_positions_x[i];
                 rope_positions_x[i] +=
                     substep_friction_retention * (rope_positions_x[i] - last_rope_positions_x[i]);
@@ -147,85 +203,13 @@
                 last_rope_positions_y[i] = last_y;
             }
 
-            // Step 2: Constrain the rope points to a maximum distance from each other
+            // Step 2: Constrain the rope points to a fixed distance from each other. The sweep
+            // direction alternates each iteration to cancel Gauss-Seidel directional bias.
             for (let count = 0; count < ITERATIONS_PER_SUBSTEP; ++count) {
-                const forward = count % 2 === 0; // alternate sweep direction each iteration to cancel Gauss-Seidel directional bias
-                for (let k = 0; k < rope_positions_x.length - 1; k++) {
-                    const i = forward ? k : rope_positions_x.length - 2 - k;
-                    if (broken[i]) continue; // this segment has torn, the two sides are independent now
-
-                    const dx = rope_positions_x[i + 1] - rope_positions_x[i];
-                    const dy = rope_positions_y[i + 1] - rope_positions_y[i];
-                    const distance = Math.max(Math.sqrt(dx ** 2 + dy ** 2), 0.0001);
-
-                    if (distance > PHYSICS.tearFactor * segment_strength[i] * ROPE_POINT_DISTANCE) {
-                        broken[i] = true;
-                        continue;
-                    }
-
-                    const d = 1 - ROPE_POINT_DISTANCE / distance;
-                    const offsetX = dx * d;
-                    const offsetY = dy * d;
-
-                    const leftFixed = is_fixed_index(i);
-                    const rightFixed = is_fixed_index(i + 1);
-                    if (leftFixed && rightFixed) {
-                        // both ends held fixed, nothing to adjust
-                    } else if (leftFixed) {
-                        rope_positions_x[i + 1] -= offsetX;
-                        rope_positions_y[i + 1] -= offsetY;
-                    } else if (rightFixed) {
-                        rope_positions_x[i] += offsetX;
-                        rope_positions_y[i] += offsetY;
-                    } else {
-                        rope_positions_x[i] += offsetX / 2;
-                        rope_positions_y[i] += offsetY / 2;
-                        rope_positions_x[i + 1] -= offsetX / 2;
-                        rope_positions_y[i + 1] -= offsetY / 2;
-                    }
-
-                    // Internal friction: damp the RELATIVE velocity between this pair, right here
-                    // inside the solver's own relaxation. This specifically kills whip-like waves
-                    // traveling along the rope (adjacent points moving very differently from each
-                    // other) without resisting the rope's overall bulk motion through space, where
-                    // neighbors move together and relative velocity is already near zero - that's
-                    // what air friction is for, and why cranking air friction up to fix whip-
-                    // snapping made the whole rope feel sluggish instead. Applying this only once
-                    // per substep (after the solver, not inside it) turned out too late to matter -
-                    // the tear-check above already sees the un-damped transient distances.
-                    if (internal_damp_per_iteration > 0) {
-                        const rel_vx =
-                            rope_positions_x[i + 1] -
-                            last_rope_positions_x[i + 1] -
-                            (rope_positions_x[i] - last_rope_positions_x[i]);
-                        const rel_vy =
-                            rope_positions_y[i + 1] -
-                            last_rope_positions_y[i + 1] -
-                            (rope_positions_y[i] - last_rope_positions_y[i]);
-
-                        if (leftFixed) {
-                            last_rope_positions_x[i + 1] += internal_damp_per_iteration * rel_vx;
-                            last_rope_positions_y[i + 1] += internal_damp_per_iteration * rel_vy;
-                        } else if (rightFixed) {
-                            last_rope_positions_x[i] -= internal_damp_per_iteration * rel_vx;
-                            last_rope_positions_y[i] -= internal_damp_per_iteration * rel_vy;
-                        } else {
-                            last_rope_positions_x[i] -= internal_damp_per_iteration * 0.5 * rel_vx;
-                            last_rope_positions_y[i] -= internal_damp_per_iteration * 0.5 * rel_vy;
-                            last_rope_positions_x[i + 1] +=
-                                internal_damp_per_iteration * 0.5 * rel_vx;
-                            last_rope_positions_y[i + 1] +=
-                                internal_damp_per_iteration * 0.5 * rel_vy;
-                        }
-                    }
-                }
-                constrain_to_bounds(
-                    rope_positions_x,
-                    rope_positions_y,
-                    canvas.width,
-                    canvas.height
-                );
+                solve_segments(count % 2 === 0);
             }
+            constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
+            apply_internal_friction();
         }
 
         apply_contact_friction(
