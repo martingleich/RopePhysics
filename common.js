@@ -51,11 +51,15 @@ function main_cycle_if_visible(canvas, draw, animate) {
     observer.observe(canvas);
 }
 
-// Lets the user drag the named handles (handles_x/y, always pinned), or grab any other
-// simulated point (positions_x/y) and drag it while the mouse is held, releasing it back
-// into the simulation on mouseup. Named handles take priority when both overlap a click.
-// Returns { is_point_pinned(i) } so the caller's physics step can skip a point currently
-// being live-dragged, the same way it already skips the named handles.
+// Lets the user drag the named handles (handles_x/y, always pinned), or grab simulated points
+// (positions_x/y) and drag them while the mouse is held, releasing them back into the simulation
+// on mouseup. Named handles take priority when both overlap a click.
+//
+// A click on the simulation starts a drag when a point lies within grab_radius of the cursor
+// (a number, or a function returning one, so it can follow a live setting). The nearest point is
+// always grabbed. If grab_extent (a function returning a radius) is given, every point within
+// that radius of the click is grabbed too, and the whole group is dragged along rigidly.
+// Returns { get_point_targets() } so the caller's physics step can pin and move the grabbed points.
 function setup_dragging(
     canvas,
     handles_x,
@@ -63,13 +67,26 @@ function setup_dragging(
     handle_radius,
     positions_x,
     positions_y,
-    grab_radius
+    grab_radius,
+    grab_extent = null
 ) {
     let dragging = null; // null, or { kind: 'handle' | 'point', idx }
-    let drag_offset_x = 0; // X Offset between the mouse and the dragged point's center
-    let drag_offset_y = 0; // Y Offset between the mouse and the dragged point's center
-    let point_target_x = 0; // Latest raw mouse-tracked target for a dragged point (not applied directly -
-    let point_target_y = 0; // the caller eases toward this across a frame's substeps; see get_point_target()
+    let drag_offset_x = 0; // X Offset between the mouse and the dragged handle's center
+    let drag_offset_y = 0; // Y Offset between the mouse and the dragged handle's center
+    // The grabbed simulation points. x/y hold each point's latest raw mouse-tracked target (not
+    // applied directly - the caller eases toward it across a frame's substeps; see
+    // get_point_targets()). The object and its arrays are reused, so a drag allocates nothing per step.
+    const grabbed = { count: 0, idx: [], x: [], y: [] };
+    const rel_x = []; // Each grabbed point's offset from the mouse at the moment of the grab
+    const rel_y = [];
+    let rel_min_x = 0,
+        rel_max_x = 0,
+        rel_min_y = 0,
+        rel_max_y = 0; // Extent of those offsets, to keep the whole group inside the canvas
+
+    function radius_of(value) {
+        return typeof value === 'function' ? value() : value;
+    }
 
     function mouse_pos(event) {
         const rect = canvas.getBoundingClientRect();
@@ -87,7 +104,7 @@ function setup_dragging(
     // Finds whichever simulated point is nearest the cursor, within grab_radius.
     function find_point(x, y) {
         let best = null;
-        let best_distance = grab_radius ** 2;
+        let best_distance = radius_of(grab_radius) ** 2;
         for (let i = 0; i < positions_x.length; i++) {
             const distance_to_point = (x - positions_x[i]) ** 2 + (y - positions_y[i]) ** 2;
             if (distance_to_point <= best_distance) {
@@ -107,6 +124,30 @@ function setup_dragging(
         return null;
     }
 
+    // Collects the nearest point plus, if grab_extent is set, everything within that radius.
+    function grab_points(nearest, x, y) {
+        const extent_sq = grab_extent ? radius_of(grab_extent) ** 2 : -1;
+        grabbed.count = 0;
+        rel_min_x = rel_min_y = Infinity;
+        rel_max_x = rel_max_y = -Infinity;
+        for (let i = 0; i < positions_x.length; i++) {
+            const distance_sq = (x - positions_x[i]) ** 2 + (y - positions_y[i]) ** 2;
+            if (i !== nearest && distance_sq > extent_sq) continue;
+            const n = grabbed.count++;
+            grabbed.idx[n] = i;
+            // Start each target at the point's current position, so there's nothing to
+            // ease toward yet if animate() runs before the next mousemove arrives.
+            grabbed.x[n] = positions_x[i];
+            grabbed.y[n] = positions_y[i];
+            rel_x[n] = positions_x[i] - x;
+            rel_y[n] = positions_y[i] - y;
+            rel_min_x = Math.min(rel_min_x, rel_x[n]);
+            rel_max_x = Math.max(rel_max_x, rel_x[n]);
+            rel_min_y = Math.min(rel_min_y, rel_y[n]);
+            rel_max_y = Math.max(rel_max_y, rel_y[n]);
+        }
+    }
+
     function set_grabbing(is_grabbing) {
         canvas.classList.toggle('grabbing', is_grabbing);
     }
@@ -121,15 +162,11 @@ function setup_dragging(
         if (hit === null) return;
         set_grabbing(true);
         dragging = { kind: hit.kind, idx: hit.idx };
-        const center_x = hit.kind === 'handle' ? handles_x[hit.idx] : positions_x[hit.idx];
-        const center_y = hit.kind === 'handle' ? handles_y[hit.idx] : positions_y[hit.idx];
-        drag_offset_x = hit.x - center_x;
-        drag_offset_y = hit.y - center_y;
-        if (hit.kind === 'point') {
-            // Start the target at the point's current position, so there's nothing to
-            // ease toward yet if animate() runs before the next mousemove arrives.
-            point_target_x = positions_x[hit.idx];
-            point_target_y = positions_y[hit.idx];
+        if (hit.kind === 'handle') {
+            drag_offset_x = hit.x - handles_x[hit.idx];
+            drag_offset_y = hit.y - handles_y[hit.idx];
+        } else {
+            grab_points(hit.idx, hit.x, hit.y);
         }
     });
 
@@ -146,11 +183,16 @@ function setup_dragging(
                     canvas.height - handle_radius
                 );
             } else {
-                // Record the raw target only. The caller eases the actual simulated point
-                // toward it a little each substep, instead of snapping it here directly -
+                // Record the raw targets only. The caller eases the actual simulated points
+                // toward them a little each substep, instead of snapping them here directly -
                 // that smooths out raw mouse/trackpad noise instead of injecting it undamped.
-                point_target_x = Math.min(Math.max(x - drag_offset_x, 0), canvas.width);
-                point_target_y = Math.min(Math.max(y - drag_offset_y, 0), canvas.height);
+                // The mouse is clamped so the group as a whole stays inside the canvas.
+                const mx = Math.min(Math.max(x, -rel_min_x), canvas.width - rel_max_x);
+                const my = Math.min(Math.max(y, -rel_min_y), canvas.height - rel_max_y);
+                for (let n = 0; n < grabbed.count; n++) {
+                    grabbed.x[n] = mx + rel_x[n];
+                    grabbed.y[n] = my + rel_y[n];
+                }
             }
             return;
         }
@@ -170,16 +212,11 @@ function setup_dragging(
     });
 
     return {
-        is_point_pinned(i) {
-            return dragging !== null && dragging.kind === 'point' && dragging.idx === i;
-        },
-        // The currently-dragged point's raw mouse target, or null if a handle is being
-        // dragged (or nothing is). The caller eases the simulated point toward this over
-        // a frame's substeps rather than snapping straight to it.
-        get_point_target() {
-            if (dragging !== null && dragging.kind === 'point')
-                return { idx: dragging.idx, x: point_target_x, y: point_target_y };
-            return null;
+        // The currently-grabbed points and their raw mouse targets ({ count, idx[], x[], y[] }),
+        // or null if a handle is being dragged (or nothing is). The caller pins these points and
+        // eases them toward their targets over a frame's substeps rather than snapping straight there.
+        get_point_targets() {
+            return dragging !== null && dragging.kind === 'point' ? grabbed : null;
         },
     };
 }
@@ -227,6 +264,7 @@ const PHYSICS = {
     // traveling along the rope/cloth without making bulk movement feel sluggish. Per REFERENCE_DT
     // the relative velocity decays by exp(-internalFriction * INTERNAL_FRICTION_SCALE).
     groundFriction: 0.3,
+    grabSize: 15, // radius (px) around a click on the cloth or rope within which all points are grabbed together; 0 grabs a single point
     tearFactor: 2.5 // a constraint breaks permanently once stretched beyond this multiple of its rest length
 };
 
@@ -278,6 +316,7 @@ bind_slider(
     PHYSICS.groundFriction,
     (v) => (PHYSICS.groundFriction = v)
 );
+bind_slider('grab_size_slider', 'grab_size_value', PHYSICS.grabSize, (v) => (PHYSICS.grabSize = v));
 bind_tear_slider(
     'tear_factor_slider',
     'tear_factor_value',

@@ -38,7 +38,11 @@
         HANDLE_RADIUS,
         rope_positions_x,
         rope_positions_y,
-        HANDLE_RADIUS
+        // A click grabs the nearest point if within reach, plus everything within the "Grab size"
+        // radius of the click. The reach never drops below the handle radius, so a grab size of 0
+        // still grabs a single point as easily as before.
+        () => Math.max(PHYSICS.grabSize, HANDLE_RADIUS),
+        () => PHYSICS.grabSize
     );
 
     const button = document.getElementById('toogle_handle');
@@ -152,7 +156,7 @@
     // solver absorb a moving anchor's motion gradually instead of all at once.
     function animate(dt, steps_left) {
         const sub_dt = dt / SUBSTEPS;
-        const point_target = drag.get_point_target();
+        const point_targets = drag.get_point_targets();
         // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
         const gravity_step = PHYSICS.gravity * sub_dt * sub_dt;
@@ -161,7 +165,8 @@
         // doesn't change within a step, so this is computed once here, not per substep.
         inv_mass.fill(1);
         for (let i = 0; i < handles_x.length; ++i) inv_mass[handle_map[i]] = 0;
-        if (point_target) inv_mass[point_target.idx] = 0;
+        if (point_targets)
+            for (let n = 0; n < point_targets.count; n++) inv_mass[point_targets.idx[n]] = 0;
 
         for (let step = 0; step < SUBSTEPS; step++) {
             const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
@@ -174,13 +179,15 @@
                 last_rope_positions_x[p] = rope_positions_x[p];
                 last_rope_positions_y[p] = rope_positions_y[p];
             }
-            // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
-            if (point_target) {
-                const p = point_target.idx;
-                rope_positions_x[p] += (point_target.x - rope_positions_x[p]) * ease;
-                rope_positions_y[p] += (point_target.y - rope_positions_y[p]) * ease;
-                last_rope_positions_x[p] = rope_positions_x[p];
-                last_rope_positions_y[p] = rope_positions_y[p];
+            // Do the same for the points currently being live-dragged, so it doesn't pick up gravity while held.
+            if (point_targets) {
+                for (let n = 0; n < point_targets.count; n++) {
+                    const p = point_targets.idx[n];
+                    rope_positions_x[p] += (point_targets.x[n] - rope_positions_x[p]) * ease;
+                    rope_positions_y[p] += (point_targets.y[n] - rope_positions_y[p]) * ease;
+                    last_rope_positions_x[p] = rope_positions_x[p];
+                    last_rope_positions_y[p] = rope_positions_y[p];
+                }
             }
 
             // Step 1: Apply a verlet integration to each rope point (fixed points can't move).

@@ -100,7 +100,11 @@
         HANDLE_RADIUS,
         cloth_positions_x,
         cloth_positions_y,
-        HANDLE_RADIUS
+        // A click grabs the nearest point if within reach, plus everything within the "Grab size"
+        // radius of the click. The reach never drops below the handle radius, so a grab size of 0
+        // still grabs a single point as easily as before.
+        () => Math.max(PHYSICS.grabSize, HANDLE_RADIUS),
+        () => PHYSICS.grabSize
     );
 
     // Distance constraints, relaxed Gauss-Seidel style. Fixed points have inv_mass 0, so they
@@ -219,7 +223,7 @@
     // solver absorb a moving anchor's motion gradually instead of all at once.
     function animate(dt, steps_left) {
         const sub_dt = dt / SUBSTEPS;
-        const point_target = drag.get_point_target();
+        const point_targets = drag.get_point_targets();
         // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
         const gravity_step = PHYSICS.gravity * sub_dt * sub_dt;
@@ -229,7 +233,8 @@
         // doesn't change within a step, so this is computed once here, not per substep.
         inv_mass.fill(1);
         inv_mass.fill(0, 0, NUM_CLOTH_POINTS);
-        if (point_target) inv_mass[point_target.idx] = 0;
+        if (point_targets)
+            for (let n = 0; n < point_targets.count; n++) inv_mass[point_targets.idx[n]] = 0;
 
         for (let step = 0; step < SUBSTEPS; step++) {
             const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
@@ -257,13 +262,15 @@
                 last_cloth_positions_x[c] = cloth_positions_x[c];
                 last_cloth_positions_y[c] = cloth_positions_y[c];
             }
-            // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
-            if (point_target) {
-                const p = point_target.idx;
-                cloth_positions_x[p] += (point_target.x - cloth_positions_x[p]) * ease;
-                cloth_positions_y[p] += (point_target.y - cloth_positions_y[p]) * ease;
-                last_cloth_positions_x[p] = cloth_positions_x[p];
-                last_cloth_positions_y[p] = cloth_positions_y[p];
+            // Do the same for the points currently being live-dragged, so it doesn't pick up gravity while held.
+            if (point_targets) {
+                for (let n = 0; n < point_targets.count; n++) {
+                    const p = point_targets.idx[n];
+                    cloth_positions_x[p] += (point_targets.x[n] - cloth_positions_x[p]) * ease;
+                    cloth_positions_y[p] += (point_targets.y[n] - cloth_positions_y[p]) * ease;
+                    last_cloth_positions_x[p] = cloth_positions_x[p];
+                    last_cloth_positions_y[p] = cloth_positions_y[p];
+                }
             }
 
             // Step 1: Apply a verlet integration to each cloth point (fixed points can't move).
