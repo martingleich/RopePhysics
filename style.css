@@ -61,8 +61,17 @@ body {
     align-items: center;
     gap: 8px;
 }
+/* Fixed-width label and value columns keep every slider at the same position and length. */
 .control_label {
-    min-width: 60px;
+    flex: 0 0 90px;
+}
+.controls input[type='range'] {
+    flex: 1 1 0;
+    min-width: 0;
+}
+.controls output {
+    flex: 0 0 48px;
+    text-align: right;
 }
 
 figure {
