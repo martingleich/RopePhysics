@@ -6,6 +6,8 @@ const FIXED_DT = 1 / 120;
 const MAX_STEPS_PER_FRAME = 2;
 // Tunable rates (friction, damping) are specified relative to this reference frame time.
 const REFERENCE_DT = 1 / 60;
+// The old code had 8 substeps per reference frame, each damping by exp(-internalFriction).
+const INTERNAL_FRICTION_SCALE = 8;
 
 // Calls animate(FIXED_DT, steps_left) once per step and draw(ctx, canvas) once per frame.
 // steps_left counts down to 1 across a frame's steps, so handle motion recorded during the
@@ -221,10 +223,9 @@ function apply_contact_friction(
 const PHYSICS = {
     gravity: 1000,
     friction: 0.005, // air friction: damps each point's absolute velocity (slows everything, including bulk motion). Fraction lost per 1/60 s
-    // Internal friction is a rate: the relative velocity between neighbors decays as exp(-internalFriction * t * INTERNAL_FRICTION_RATE)
-
     internalFriction: 2.0, // damps relative velocity between connected points only - kills whip-like waves
-    // traveling along the rope/cloth without making bulk movement feel sluggish
+    // traveling along the rope/cloth without making bulk movement feel sluggish. Per REFERENCE_DT
+    // the relative velocity decays by exp(-internalFriction * INTERNAL_FRICTION_SCALE).
     groundFriction: 0.3,
     tearFactor: 2.5 // a constraint breaks permanently once stretched beyond this multiple of its rest length
 };

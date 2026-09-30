@@ -7,9 +7,8 @@
     const ROPE_LENGTH = 200;
     const NUM_ROPE_POINTS = 100;
     const ROPE_POINT_DISTANCE = ROPE_LENGTH / NUM_ROPE_POINTS;
-    const SUBSTEPS = 8; // split each frame into several smaller physics steps, so gravity never
-    // outruns the constraint solver (fixes long-term length "creep")
-    const ITERATIONS_PER_SUBSTEP = 50; // 8*50 = 400, same total solver work as before substepping
+    const SUBSTEPS = 4; // substeps per fixed step (see FIXED_DT in common.js); more, shorter substeps beat more iterations
+    const ITERATIONS_PER_SUBSTEP = 12; // solver iterations per substep
     const STRENGTH_VARIANCE = 0.4; // +/-40% random per-segment strength, so segments aren't perfectly uniform
 
     const rope_positions_y = Float64Array.from(
@@ -117,11 +116,13 @@
     // whip-like waves traveling along the rope without resisting its bulk motion through space
     // (where neighbors move together and relative velocity is already near zero) - that's what
     // air friction is for, and why cranking air friction up made the whole rope feel sluggish.
-    // Applied once per substep, after the solver has settled; 1 - exp(-friction) is the closed
-    // form of damping compounded over the solver's iterations, and stays stable for any value.
-    function apply_internal_friction() {
+    // Applied once per substep, after the solver has settled; the exponential keeps it stable
+    // for any slider value and independent of the step size.
+    function apply_internal_friction(sub_dt) {
         if (PHYSICS.internalFriction <= 0) return;
-        const damp = 1 - Math.exp(-PHYSICS.internalFriction);
+        const damp =
+            1 -
+            Math.exp((-PHYSICS.internalFriction * INTERNAL_FRICTION_SCALE * sub_dt) / REFERENCE_DT);
         for (let i = 0; i < NUM_ROPE_POINTS - 1; i++) {
             if (broken[i]) continue;
             const wa = inv_mass[i],
@@ -145,42 +146,34 @@
         }
     }
 
-    function animate(dt) {
+    // Advances the simulation by dt. steps_left is how many animate() calls (this one included)
+    // remain in the current frame; the handles cover their remaining distance to the latest
+    // mouse target evenly across them, which filters out raw mouse/trackpad noise and lets the
+    // solver absorb a moving anchor's motion gradually instead of all at once.
+    function animate(dt, steps_left) {
         const sub_dt = dt / SUBSTEPS;
-
-        // Capture where each externally-driven point currently is, so it can be eased
-        // toward its live target a little each substep instead of snapping there in one
-        // go. This filters out raw mouse/trackpad noise, and lets the solver absorb a
-        // moving anchor's motion gradually instead of all at once in the first substep.
-        const handle_start_x = handles_x.map((_, i) => rope_positions_x[handle_map[i]]);
-        const handle_start_y = handles_y.map((_, i) => rope_positions_y[handle_map[i]]);
         const point_target = drag.get_point_target();
-        const point_start_x = point_target ? rope_positions_x[point_target.idx] : 0;
-        const point_start_y = point_target ? rope_positions_y[point_target.idx] : 0;
-        // PHYSICS.friction is a per-frame retention factor, but Step 1 below now runs once per
-        // substep - so take the SUBSTEPS-th root here, otherwise the damping compounds to
-        // (1-friction)^SUBSTEPS per frame instead of the intended (1-friction).
-        const substep_friction_retention = Math.pow(1 - PHYSICS.friction, 1 / SUBSTEPS);
-        for (let step = 0; step < SUBSTEPS; step++) {
-            const t = (step + 1) / SUBSTEPS;
+        // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
+        const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
 
-            // Update the rope-position with the handle, also force the last position, since we don't want the rope to accelerate.
+        for (let step = 0; step < SUBSTEPS; step++) {
+            const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
+
+            // Move the handle points toward their targets, also force the last position, since we don't want the rope to accelerate.
             for (let i = 0; i < handles_x.length; ++i) {
-                rope_positions_x[handle_map[i]] =
-                    handle_start_x[i] + (handles_x[i] - handle_start_x[i]) * t;
-                rope_positions_y[handle_map[i]] =
-                    handle_start_y[i] + (handles_y[i] - handle_start_y[i]) * t;
-                last_rope_positions_x[handle_map[i]] = rope_positions_x[handle_map[i]];
-                last_rope_positions_y[handle_map[i]] = rope_positions_y[handle_map[i]];
+                const p = handle_map[i];
+                rope_positions_x[p] += (handles_x[i] - rope_positions_x[p]) * ease;
+                rope_positions_y[p] += (handles_y[i] - rope_positions_y[p]) * ease;
+                last_rope_positions_x[p] = rope_positions_x[p];
+                last_rope_positions_y[p] = rope_positions_y[p];
             }
             // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
             if (point_target) {
-                rope_positions_x[point_target.idx] =
-                    point_start_x + (point_target.x - point_start_x) * t;
-                rope_positions_y[point_target.idx] =
-                    point_start_y + (point_target.y - point_start_y) * t;
-                last_rope_positions_x[point_target.idx] = rope_positions_x[point_target.idx];
-                last_rope_positions_y[point_target.idx] = rope_positions_y[point_target.idx];
+                const p = point_target.idx;
+                rope_positions_x[p] += (point_target.x - rope_positions_x[p]) * ease;
+                rope_positions_y[p] += (point_target.y - rope_positions_y[p]) * ease;
+                last_rope_positions_x[p] = rope_positions_x[p];
+                last_rope_positions_y[p] = rope_positions_y[p];
             }
 
             // Inverse masses for this substep: handles and a live-dragged point are fixed.
@@ -209,7 +202,7 @@
                 solve_segments(count % 2 === 0);
             }
             constrain_to_bounds(rope_positions_x, rope_positions_y, canvas.width, canvas.height);
-            apply_internal_friction();
+            apply_internal_friction(sub_dt);
         }
 
         apply_contact_friction(
@@ -219,7 +212,8 @@
             last_rope_positions_y,
             canvas.width,
             canvas.height,
-            PHYSICS.groundFriction
+            PHYSICS.groundFriction,
+            dt
         );
     }
     function draw(ctx, canvas) {

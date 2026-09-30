@@ -7,9 +7,8 @@
     const CLOTH_LENGTH = 200;
     const NUM_CLOTH_POINTS = 30;
     const CLOTH_POINT_DISTANCE = CLOTH_LENGTH / (NUM_CLOTH_POINTS - 1);
-    const SUBSTEPS = 8; // split each frame into several smaller physics steps, so gravity never
-    // outruns the constraint solver (fixes long-term length "creep")
-    const ITERATIONS_PER_SUBSTEP = 12; // 8*12 = 96, close to the previous 3*NUM_CLOTH_POINTS total
+    const SUBSTEPS = 4; // substeps per fixed step (see FIXED_DT in common.js); more, shorter substeps beat more iterations
+    const ITERATIONS_PER_SUBSTEP = 3; // solver iterations per substep
     const THREAD_BIAS_VERTICAL = 0.8; // vertical ("warp") connections are inherently a bit weaker than horizontal ("weft") ones
     const STRENGTH_VARIANCE = 0.35; // +/-35% random per-connection strength on top of the bias, so no two threads are identical
 
@@ -141,11 +140,13 @@
 
     // Internal friction: damp the RELATIVE velocity between connected points. Kills whip-like
     // waves without resisting the cloth's overall bulk motion. Applied once per substep, after
-    // the solver has settled; 1 - exp(-friction) is the closed form of damping compounded over
-    // the solver's iterations, and stays stable for any slider value.
-    function apply_internal_friction() {
+    // the solver has settled; the exponential keeps it stable for any slider value and
+    // independent of the step size.
+    function apply_internal_friction(sub_dt) {
         if (PHYSICS.internalFriction <= 0) return;
-        const damp = 1 - Math.exp(-PHYSICS.internalFriction);
+        const damp =
+            1 -
+            Math.exp((-PHYSICS.internalFriction * INTERNAL_FRICTION_SCALE * sub_dt) / REFERENCE_DT);
         for (let k = 0; k < NUM_CONSTRAINTS; k++) {
             if (cBroken[k] === 1) continue;
             const a = cA[k],
@@ -212,59 +213,50 @@
         }
     }
 
-    function animate(dt) {
+    // Advances the simulation by dt. steps_left is how many animate() calls (this one included)
+    // remain in the current frame; the handles cover their remaining distance to the latest
+    // mouse target evenly across them, which filters out raw mouse/trackpad noise and lets the
+    // solver absorb a moving anchor's motion gradually instead of all at once.
+    function animate(dt, steps_left) {
         const sub_dt = dt / SUBSTEPS;
-
-        // Capture where each externally-driven point currently is, so it can be eased
-        // toward its live target a little each substep instead of snapping there in one
-        // go. This filters out raw mouse/trackpad noise, and lets the solver absorb a
-        // moving anchor's motion gradually instead of all at once in the first substep.
-        const handle_start_x = [cloth_positions_x[0], cloth_positions_x[NUM_CLOTH_POINTS - 1]];
-        const handle_start_y = [cloth_positions_y[0], cloth_positions_y[NUM_CLOTH_POINTS - 1]];
         const point_target = drag.get_point_target();
-        const point_start_x = point_target ? cloth_positions_x[point_target.idx] : 0;
-        const point_start_y = point_target ? cloth_positions_y[point_target.idx] : 0;
-        // PHYSICS.friction is a per-frame retention factor, but Step 1 below now runs once per
-        // substep - so take the SUBSTEPS-th root here, otherwise the damping compounds to
-        // (1-friction)^SUBSTEPS per frame instead of the intended (1-friction).
-        const substep_friction_retention = Math.pow(1 - PHYSICS.friction, 1 / SUBSTEPS);
+        // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
+        const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
+        const last_corner = NUM_CLOTH_POINTS - 1;
 
         for (let step = 0; step < SUBSTEPS; step++) {
-            const t = (step + 1) / SUBSTEPS;
+            const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
 
-            // Update the cloth-position with the handle, also force the last position, since we don't want the cloth to accelerate.
-            cloth_positions_x[0] = handle_start_x[0] + (handles_x[0] - handle_start_x[0]) * t;
-            cloth_positions_y[0] = handle_start_y[0] + (handles_y[0] - handle_start_y[0]) * t;
+            // Move the handle points toward their targets, also force the last position, since we don't want the cloth to accelerate.
+            cloth_positions_x[0] += (handles_x[0] - cloth_positions_x[0]) * ease;
+            cloth_positions_y[0] += (handles_y[0] - cloth_positions_y[0]) * ease;
             last_cloth_positions_x[0] = cloth_positions_x[0];
             last_cloth_positions_y[0] = cloth_positions_y[0];
-            cloth_positions_x[NUM_CLOTH_POINTS - 1] =
-                handle_start_x[1] + (handles_x[1] - handle_start_x[1]) * t;
-            cloth_positions_y[NUM_CLOTH_POINTS - 1] =
-                handle_start_y[1] + (handles_y[1] - handle_start_y[1]) * t;
-            last_cloth_positions_x[NUM_CLOTH_POINTS - 1] = cloth_positions_x[NUM_CLOTH_POINTS - 1];
-            last_cloth_positions_y[NUM_CLOTH_POINTS - 1] = cloth_positions_y[NUM_CLOTH_POINTS - 1];
+            cloth_positions_x[last_corner] += (handles_x[1] - cloth_positions_x[last_corner]) * ease;
+            cloth_positions_y[last_corner] += (handles_y[1] - cloth_positions_y[last_corner]) * ease;
+            last_cloth_positions_x[last_corner] = cloth_positions_x[last_corner];
+            last_cloth_positions_y[last_corner] = cloth_positions_y[last_corner];
             // The rest of the top row is anchored along a straight rail between the two corner
             // handles, like a curtain hung from a rod - so every point along it bears real
             // tension (and can tear on its own), not just the two corner connections.
-            for (let c = 1; c < NUM_CLOTH_POINTS - 1; c++) {
-                const frac = c / (NUM_CLOTH_POINTS - 1);
+            for (let c = 1; c < last_corner; c++) {
+                const frac = c / last_corner;
                 cloth_positions_x[c] =
                     cloth_positions_x[0] +
-                    (cloth_positions_x[NUM_CLOTH_POINTS - 1] - cloth_positions_x[0]) * frac;
+                    (cloth_positions_x[last_corner] - cloth_positions_x[0]) * frac;
                 cloth_positions_y[c] =
                     cloth_positions_y[0] +
-                    (cloth_positions_y[NUM_CLOTH_POINTS - 1] - cloth_positions_y[0]) * frac;
+                    (cloth_positions_y[last_corner] - cloth_positions_y[0]) * frac;
                 last_cloth_positions_x[c] = cloth_positions_x[c];
                 last_cloth_positions_y[c] = cloth_positions_y[c];
             }
             // Do the same for a point currently being live-dragged, so it doesn't pick up gravity while held.
             if (point_target) {
-                cloth_positions_x[point_target.idx] =
-                    point_start_x + (point_target.x - point_start_x) * t;
-                cloth_positions_y[point_target.idx] =
-                    point_start_y + (point_target.y - point_start_y) * t;
-                last_cloth_positions_x[point_target.idx] = cloth_positions_x[point_target.idx];
-                last_cloth_positions_y[point_target.idx] = cloth_positions_y[point_target.idx];
+                const p = point_target.idx;
+                cloth_positions_x[p] += (point_target.x - cloth_positions_x[p]) * ease;
+                cloth_positions_y[p] += (point_target.y - cloth_positions_y[p]) * ease;
+                last_cloth_positions_x[p] = cloth_positions_x[p];
+                last_cloth_positions_y[p] = cloth_positions_y[p];
             }
 
             // Inverse masses for this substep: the top row and a live-dragged point are fixed.
@@ -299,7 +291,7 @@
                 solve_constraints(count % 2 === 0);
             }
             constrain_to_bounds(cloth_positions_x, cloth_positions_y, canvas.width, canvas.height);
-            apply_internal_friction();
+            apply_internal_friction(sub_dt);
         }
 
         apply_contact_friction(
@@ -309,7 +301,8 @@
             last_cloth_positions_y,
             canvas.width,
             canvas.height,
-            PHYSICS.groundFriction
+            PHYSICS.groundFriction,
+            dt
         );
     }
 
