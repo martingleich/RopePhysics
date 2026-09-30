@@ -222,7 +222,14 @@
         const point_target = drag.get_point_target();
         // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
+        const gravity_step = PHYSICS.gravity * sub_dt * sub_dt;
         const last_corner = NUM_CLOTH_POINTS - 1;
+
+        // Inverse masses: the top row and a live-dragged point are fixed. Which points are fixed
+        // doesn't change within a step, so this is computed once here, not per substep.
+        inv_mass.fill(1);
+        inv_mass.fill(0, 0, NUM_CLOTH_POINTS);
+        if (point_target) inv_mass[point_target.idx] = 0;
 
         for (let step = 0; step < SUBSTEPS; step++) {
             const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
@@ -259,11 +266,6 @@
                 last_cloth_positions_y[p] = cloth_positions_y[p];
             }
 
-            // Inverse masses for this substep: the top row and a live-dragged point are fixed.
-            inv_mass.fill(1);
-            inv_mass.fill(0, 0, NUM_CLOTH_POINTS);
-            if (point_target) inv_mass[point_target.idx] = 0;
-
             // Step 1: Apply a verlet integration to each cloth point (fixed points can't move).
             for (let i = 0; i < NUM_POINTS; i++) {
                 if (inv_mass[i] === 0) continue;
@@ -276,7 +278,7 @@
                 cloth_positions_y[i] +=
                     substep_friction_retention *
                         (cloth_positions_y[i] - last_cloth_positions_y[i]) +
-                    PHYSICS.gravity * sub_dt * sub_dt;
+                    gravity_step;
                 last_cloth_positions_y[i] = last_y;
 
                 const last_z = cloth_positions_z[i];

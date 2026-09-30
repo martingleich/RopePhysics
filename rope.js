@@ -155,6 +155,13 @@
         const point_target = drag.get_point_target();
         // PHYSICS.friction is the fraction of velocity lost per REFERENCE_DT.
         const substep_friction_retention = Math.pow(1 - PHYSICS.friction, sub_dt / REFERENCE_DT);
+        const gravity_step = PHYSICS.gravity * sub_dt * sub_dt;
+
+        // Inverse masses: handles and a live-dragged point are fixed. Which points are fixed
+        // doesn't change within a step, so this is computed once here, not per substep.
+        inv_mass.fill(1);
+        for (let i = 0; i < handles_x.length; ++i) inv_mass[handle_map[i]] = 0;
+        if (point_target) inv_mass[point_target.idx] = 0;
 
         for (let step = 0; step < SUBSTEPS; step++) {
             const ease = 1 / (steps_left * SUBSTEPS - step); // share of the remaining distance to cover now
@@ -176,11 +183,6 @@
                 last_rope_positions_y[p] = rope_positions_y[p];
             }
 
-            // Inverse masses for this substep: handles and a live-dragged point are fixed.
-            inv_mass.fill(1);
-            for (let i = 0; i < handles_x.length; ++i) inv_mass[handle_map[i]] = 0;
-            if (point_target) inv_mass[point_target.idx] = 0;
-
             // Step 1: Apply a verlet integration to each rope point (fixed points can't move).
             for (let i = 0; i < NUM_ROPE_POINTS; i++) {
                 if (inv_mass[i] === 0) continue;
@@ -192,7 +194,7 @@
                 const last_y = rope_positions_y[i];
                 rope_positions_y[i] +=
                     substep_friction_retention * (rope_positions_y[i] - last_rope_positions_y[i]) +
-                    PHYSICS.gravity * sub_dt * sub_dt;
+                    gravity_step;
                 last_rope_positions_y[i] = last_y;
             }
 
